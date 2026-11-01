@@ -7,25 +7,28 @@
   body{margin:0;overflow:hidden;background:#000;font-family:monospace;color:#fff}
   canvas{display:block}
   
-  /* Ecrãs (Menu, Game Over) */
   .screen {
-    position:absolute; inset:0; background:rgba(0,0,0,0.9); 
+    position:absolute; inset:0; background:rgba(0,0,0,0.95); 
     display:flex; flex-direction:column; align-items:center; justify-content:center; 
     z-index:100; gap:15px; text-align: center;
   }
   .screen h1 { color: #8b0000; text-shadow: 2px 2px 5px #000; font-size: 40px; margin-bottom: 0;}
   .screen p { color: #ccc; max-width: 600px; line-height: 1.5;}
   .screen input{padding:10px;font-size:16px;width:200px;text-align:center; background: #222; color: #fff; border: 1px solid #555;}
-  .screen button{padding:12px 24px;font-size:16px;background:#8b0000;color:#fff;border:2px solid #fff;cursor:pointer; font-weight: bold;}
+  .screen button{padding:12px 24px;font-size:16px;background:#8b0000;color:#fff;border:2px solid #fff;cursor:pointer; font-weight: bold; margin: 5px;}
   .screen button:hover { background: #ff0000; }
   
   #hud{position:absolute;top:10px;left:10px;font-size:16px;text-shadow: 1px 1px 2px #000; z-index: 10;}
+  #sanityHud { color: #00ffcc; font-weight: bold; }
   #jump{position:absolute;inset:0;background:#f00;display:none;z-index:50; background-size: cover; background-position: center;}
+  
+  /* Ecrã de Lobby */
+  #lobbyScreen { display: none; }
+  #lobbyList { font-size: 20px; color: #fff; margin: 20px 0; }
 </style>
 </head>
 <body>
 
-<!-- ECRÃ INICIAL -->
 <div id="menuScreen" class="screen">
   <h1>Helena Alves Horror Game</h1>
   <p>A escola está vazia... mas ela anda por aí. Encontra os 6 manuais de português para poderes sair.</p>
@@ -36,34 +39,49 @@
   </div>
 </div>
 
-<!-- ECRÃ DE FIM DE JOGO -->
+<div id="lobbyScreen" class="screen">
+  <h1>Sala de Espera</h1>
+  <p>Código da Sala: <strong id="displayRoomCode" style="font-size:24px; color:yellow;"></strong></p>
+  <div id="lobbyList">Jogadores: 1</div>
+  <button id="startGameBtn" style="display:none; background:#008b00;">Começar Jogo (Apenas Host)</button>
+  <p id="waitMsg" style="color: #aaa;">À espera que o criador comece o jogo...</p>
+</div>
+
 <div id="gameOverScreen" class="screen" style="display:none;">
   <h1 id="endTitle">GAME OVER</h1>
   <p id="endMessage">A Helena apanhou-te.</p>
   <button id="backToMenuBtn">Voltar ao Menu Principal</button>
 </div>
 
-<div id="hud">Manuais: <span id="count">0</span>/6</div>
+<div id="hud">
+    Manuais: <span id="count">0</span>/6<br>
+    <span id="sanityHud">Sanidade: 1 (Apanha diários para +1)</span>
+</div>
 <div id="jump"></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 const socket = io();
-let roomId = null;
-let scene, camera, renderer, player, helena, manuals = [], otherPlayers = {};
-let keys = {}, yaw = 0, pitch = 0, running = false, dead = false, collected = 0;
-const speed = 5, enemySpeed = 2.8;
+let roomId = null, isHost = false;
+let scene, camera, renderer, player, helena, manuals = [], diaries = [], otherPlayers = {};
+let keys = {}, yaw = 0, pitch = 0, running = false, dead = false, collected = 0, sanity = 1;
+let collidableBoxes = []; // Para colisões
+const speed = 5, enemySpeed = 2.5;
+let currentFloor = 0; // 0 = R/C, 1 = 1º Andar
 
 const menuScreen = document.getElementById('menuScreen');
+const lobbyScreen = document.getElementById('lobbyScreen');
 const gameOverScreen = document.getElementById('gameOverScreen');
 
-// --- SISTEMA DE MENUS E SALAS ---
 document.getElementById('createBtn').onclick = () => {
   socket.emit('createRoom', (res) => {
-    roomId = res.roomId;
-    alert('Sala criada: ' + roomId + '\nPassa este código aos teus amigos.');
-    startGame();
+    roomId = res.roomId; isHost = true;
+    document.getElementById('displayRoomCode').innerText = roomId;
+    document.getElementById('startGameBtn').style.display = 'block';
+    document.getElementById('waitMsg').style.display = 'none';
+    menuScreen.style.display = 'none';
+    lobbyScreen.style.display = 'flex';
   });
 };
 
@@ -72,16 +90,27 @@ document.getElementById('joinBtn').onclick = () => {
   if (!code) return alert('Escreve um código de sala!');
   socket.emit('joinRoom', { roomId: code }, (res) => {
     if (res.error) return alert(res.error);
-    roomId = code;
-    startGame();
+    roomId = code; isHost = false;
+    document.getElementById('displayRoomCode').innerText = roomId;
+    menuScreen.style.display = 'none';
+    lobbyScreen.style.display = 'flex';
+    if(res.started) startGame(); // Se o jogo já começou
   });
 };
 
-document.getElementById('backToMenuBtn').onclick = () => {
-  window.location.reload(); // Recarrega a página para limpar tudo e voltar ao menu inicial
+document.getElementById('startGameBtn').onclick = () => {
+    socket.emit('startGame', { roomId });
 };
 
+socket.on('updateLobby', (count) => {
+    document.getElementById('lobbyList').innerText = `Jogadores na sala: ${count}`;
+});
+
+socket.on('gameStarted', () => { startGame(); });
+document.getElementById('backToMenuBtn').onclick = () => { window.location.reload(); };
+
 function startGame() {
+  lobbyScreen.style.display = 'none';
   menuScreen.style.display = 'none';
   gameOverScreen.style.display = 'none';
   running = true;
@@ -97,11 +126,11 @@ function endGame(title, msg) {
   gameOverScreen.style.display = 'flex';
 }
 
-// --- CRIAÇÃO DO MUNDO 3D ---
+// --- MUNDO 3D ---
 function initThree() {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x050505);
-  scene.fog = new THREE.FogExp2(0x050505, 0.04); // Nevoeiro mais leve
+  scene.background = new THREE.Color(0x020202);
+  scene.fog = new THREE.FogExp2(0x050505, 0.03);
   
   camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
   renderer = new THREE.WebGLRenderer({antialias:true});
@@ -109,113 +138,45 @@ function initThree() {
   renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
-  // Iluminação (Luz da escola - amarelada e fraca)
-  scene.add(new THREE.AmbientLight(0x886644, 0.5));
-  const dl = new THREE.DirectionalLight(0xffeedd, 0.6);
-  dl.position.set(10,20,10);
-  dl.castShadow = true;
-  scene.add(dl);
-
-  // --- CONSTRUÇÃO DA ESCOLA ---
-  // Chão (Textura de madeira/ladrilho)
-  const floorTex = new THREE.CanvasTexture(createWoodTexture());
-  floorTex.wrapS = THREE.RepeatWrapping;
-  floorTex.wrapT = THREE.RepeatWrapping;
-  floorTex.repeat.set(30, 30);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(100,100), new THREE.MeshStandardMaterial({map: floorTex}));
-  floor.rotation.x = -Math.PI/2; 
-  floor.receiveShadow = true;
-  scene.add(floor);
-
-  // Teto
-  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(100,100), new THREE.MeshStandardMaterial({color:0x111111}));
-  ceiling.rotation.x = Math.PI/2;
-  ceiling.position.y = 4;
-  scene.add(ceiling);
-
-  // Paredes com Rodapé
-  const wallMat = new THREE.MeshStandardMaterial({color:0xdddddd}); // Branco sujo
-  const baseboardMat = new THREE.MeshStandardMaterial({color:0x223366}); // Rodapé azul escuro
-  const wallGeo = new THREE.BoxGeometry(10,4,1);
-  const baseboardGeo = new THREE.BoxGeometry(10, 0.5, 1.1);
-
-  // Layout do Labirinto Escolar
-  const walls = [[0,-20,0],[0,20,0],[-20,0,Math.PI/2],[20,0,Math.PI/2],[-5,-10,0],[5,-10,0],[-5,10,0],[5,10,0],[-10,0,Math.PI/2],[10,0,Math.PI/2],[0,-5,0],[0,5,0]];
+  // Luzes (Mais escuras)
+  scene.add(new THREE.AmbientLight(0x221111, 0.3)); 
   
-  walls.forEach(([x,z,r])=>{
-    const w = new THREE.Mesh(wallGeo, wallMat);
-    w.position.set(x,2,z); w.rotation.y = r; w.castShadow = true; w.receiveShadow = true;
-    scene.add(w);
+  // Lanterna do jogador
+  const flashlight = new THREE.PointLight(0xffeedd, 1.5, 15);
+  flashlight.position.set(0,0,0);
+  camera.add(flashlight);
+  scene.add(camera);
 
-    // Adicionar rodapé na base da parede
-    const b = new THREE.Mesh(baseboardGeo, baseboardMat);
-    b.position.set(x, 0.25, z); b.rotation.y = r;
-    scene.add(b);
-  });
+  // Luz vermelha no 1º andar
+  const redLight = new THREE.PointLight(0xff0000, 2, 20);
+  redLight.position.set(0, 6, 0);
+  scene.add(redLight);
 
-  // Cacifos Escolares (Lockers) para dar ambiente
-  const lockerMatRed = new THREE.MeshStandardMaterial({color:0x8b0000});
-  const lockerMatGreen = new THREE.MeshStandardMaterial({color:0x005522});
-  for(let i=0; i<4; i++) {
-      const locker = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3, 0.8), i%2===0 ? lockerMatRed : lockerMatGreen);
-      locker.position.set(-12 + (i*2), 1.5, -12); // Num canto
-      locker.castShadow = true; locker.receiveShadow = true;
-      scene.add(locker);
-  }
-
-  // Quadros de Português nas paredes
-  const quadroMat = new THREE.MeshStandardMaterial({color:0x111111, emissive: 0x222200});
-  for(let i=0; i<6; i++){
-      const quadro = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 0.1), quadroMat);
-      quadro.position.set(12 - (i*3), 2.5, -19.4);
-      scene.add(quadro);
-  }
+  buildSchool();
 
   player = new THREE.Object3D();
   player.position.set(0,1.6,0); 
   scene.add(player);
 
-  // --- HELENA (A PROFESSORA) ---
-  helena = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1,2,0.5), new THREE.MeshStandardMaterial({color:0x2a1a1a}));
-  body.position.y = 1; body.castShadow = true;
-  helena.add(body);
+  buildHelena();
   
-  // FOTO DA HELENA (Carregamento seguro)
-  const textureLoader = new THREE.TextureLoader();
-  // Adicionamos um timestamp no final para forçar o navegador a procurar a versão mais recente e não usar cache antiga
-  textureLoader.load('/helena.jpg?v=2', (texture) => {
-      texture.minFilter = THREE.LinearFilter; // Corrige problemas de tamanho da imagem
-      const faceGeo = new THREE.PlaneGeometry(1, 1);
-      const faceMat = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
-      const face = new THREE.Mesh(faceGeo, faceMat);
-      face.position.set(0, 2.2, 0.26);
-      helena.add(face);
-  }, undefined, (err) => {
-      console.error("ERRO AO CARREGAR FOTO:", err);
-  });
-
-  const headBase = new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,0.8), new THREE.MeshStandardMaterial({color:0xffccaa}));
-  headBase.position.y = 2.2; helena.add(headBase);
-
-  // Olhos vermelhos
-  const eyeGeo = new THREE.SphereGeometry(0.08);
-  const eyeMat = new THREE.MeshBasicMaterial({color:0xff0000});
-  const eyeL = new THREE.Mesh(eyeGeo, eyeMat); eyeL.position.set(-0.2,2.3,0.27);
-  const eyeR = new THREE.Mesh(eyeGeo, eyeMat); eyeR.position.set(0.2,2.3,0.27);
-  helena.add(eyeL, eyeR);
-
-  helena.position.set(15,0,15); 
-  scene.add(helena);
-
-  // Manuais de Português (Livros amarelos)
-  const positions = [[-15,5],[15,-5],[0,15],[-12,-12],[12,12],[5,-15]];
-  positions.forEach(([x,z]) => {
+  // Manuais
+  const manualPos = [[-15, 1, 5], [15, 1, -5], [0, 1, 15], [-12, 1, -12], [12, 1, 12], [5, 1, -15]];
+  manualPos.forEach(([x,y,z]) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.7,0.1), new THREE.MeshStandardMaterial({color:0xffcc00, emissive:0x442200}));
-    m.position.set(x,1,z); m.castShadow = true;
+    m.position.set(x,y,z); m.castShadow = true;
     scene.add(m); manuals.push(m);
   });
 
+  // Diários da Helena (Sanidade)
+  const diaryPos = [[-5, 1, 5], [8, 1, 8], [0, 5.6, 0]]; // Um no 1º andar
+  diaryPos.forEach(([x,y,z]) => {
+    const d = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.5,0.05), new THREE.MeshStandardMaterial({color:0x00ffff, emissive:0x004444}));
+    d.position.set(x,y,z);
+    scene.add(d); diaries.push(d);
+  });
+
+  // Eventos
   addEventListener('resize', () => {
     camera.aspect = innerWidth/innerHeight;
     camera.updateProjectionMatrix();
@@ -233,20 +194,127 @@ function initThree() {
   animate();
 }
 
-// --- FUNÇÕES AUXILIARES ---
-function createWoodTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 512; canvas.height = 512;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#6b4c3a'; // Castanho
-    ctx.fillRect(0, 0, 512, 512);
-    ctx.strokeStyle = '#4a3326';
-    ctx.lineWidth = 4;
-    for(let i=0; i<512; i+=64) {
-        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
+// --- CONSTRUÇÃO DA ESCOLA (2 ANDARES) ---
+function buildSchool() {
+    const wallMat = new THREE.MeshStandardMaterial({color:0x555555}); 
+    const floorMat = new THREE.MeshStandardMaterial({color:0x8b5a2b}); // Madeira
+
+    // R/C (Chão)
+    const floor0 = new THREE.Mesh(new THREE.PlaneGeometry(40,40), floorMat);
+    floor0.rotation.x = -Math.PI/2; floor0.receiveShadow = true;
+    scene.add(floor0);
+
+    // 1º Andar (Chão e Teto)
+    const floor1 = new THREE.Mesh(new THREE.PlaneGeometry(40,40), floorMat);
+    floor1.rotation.x = -Math.PI/2; floor1.position.y = 5; floor1.receiveShadow = true;
+    scene.add(floor1);
+
+    const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(40,40), new THREE.MeshStandardMaterial({color:0x111111}));
+    ceiling.rotation.x = Math.PI/2; ceiling.position.y = 10;
+    scene.add(ceiling);
+
+    // Função auxiliar para criar paredes com colisão
+    function createWall(x, z, w, h, d, rot=0) {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
+        wall.position.set(x, h/2, z); wall.rotation.y = rot;
+        wall.castShadow = true; wall.receiveShadow = true;
+        scene.add(wall);
+        collidableBoxes.push({ x, z, w, d, rot });
     }
-    return canvas;
+
+    // Paredes Exteriores
+    createWall(0, -20, 40, 10, 1);
+    createWall(0, 20, 40, 10, 1);
+    createWall(-20, 0, 1, 10, 40);
+    createWall(20, 0, 1, 10, 40);
+
+    // Paredes Interiores (R/C)
+    createWall(-5, -5, 10, 5, 1);
+    createWall(5, 5, 10, 5, 1);
+    createWall(10, -10, 1, 5, 10);
+
+    // Paredes Interiores (1º Andar)
+    createWall(-5, -5, 10, 5, 1, 0); // Mesmas paredes, mas a altura 5 a 10
+    // Nota: O ideal era ter um array de andares, mas para simplificar desenhamos as paredes do 2º andar no topo
+
+    // Escadas (Rampa para subir)
+    const stairs = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 10), new THREE.MeshStandardMaterial({color:0x333333}));
+    stairs.position.set(15, 2.5, 0);
+    stairs.rotation.z = Math.PI / 6; // Inclinada
+    stairs.rotation.x = Math.PI / 2; // Deitada
+    scene.add(stairs);
+
+    // Janelas (Planos brilhantes nas paredes exteriores)
+    const windowMat = new THREE.MeshBasicMaterial({color:0x001122}); // Azul escuro noite
+    for(let i=-15; i<=15; i+=10) {
+        const win1 = new THREE.Mesh(new THREE.PlaneGeometry(3, 2), windowMat);
+        win1.position.set(i, 2.5, -19.4); scene.add(win1);
+        const win2 = new THREE.Mesh(new THREE.PlaneGeometry(3, 2), windowMat);
+        win2.position.set(i, 7.5, -19.4); scene.add(win2); // Janela do 1º andar
+    }
+
+    // Plantas (Cilindro castanho + Esfera verde)
+    for(let i=0; i<4; i++) {
+        const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.3, 0.8), new THREE.MeshStandardMaterial({color:0x8b4513}));
+        const leaves = new THREE.Mesh(new THREE.SphereGeometry(0.7), new THREE.MeshStandardMaterial({color:0x006400}));
+        pot.position.set(-18 + (i*12), 0.4, 18); leaves.position.set(-18 + (i*12), 1.2, 18);
+        scene.add(pot); scene.add(leaves);
+        collidableBoxes.push({ x: -18 + (i*12), z: 18, w: 1, d: 1, rot: 0 });
+    }
+
+    // Cacifos Coloridos
+    for(let i=0; i<3; i++) {
+        const locker = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 0.8), new THREE.MeshStandardMaterial({color: i%2===0 ? 0x8b0000 : 0x005522}));
+        locker.position.set(18.5, 2, -10 + (i*4)); 
+        scene.add(locker);
+        collidableBoxes.push({ x: 18.5, z: -10 + (i*4), w: 2, d: 0.8, rot: 0 });
+    }
+}
+
+// --- HELENA ---
+function buildHelena() {
+    helena = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1,2,0.5), new THREE.MeshStandardMaterial({color:0x111111}));
+    body.position.y = 1; body.castShadow = true;
+    helena.add(body);
+    
+    // Carregamento da Imagem de forma mais robusta
+    const loader = new THREE.TextureLoader();
+    loader.crossOrigin = "anonymous"; 
+    loader.load('/helena.jpg', (texture) => {
+        texture.minFilter = THREE.LinearFilter;
+        const faceMat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+        const face = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), faceMat);
+        face.position.set(0, 2.2, 0.26); // Frente da cabeça
+        helena.add(face);
+    }, undefined, () => {
+        // Se a imagem falhar, mete uma cara vermelha básica para não bloquear o jogo
+        const fallback = new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,0.8), new THREE.MeshBasicMaterial({color:0xff0000}));
+        fallback.position.y = 2.2; helena.add(fallback);
+    });
+
+    helena.position.set(15,0,15); 
+    scene.add(helena);
+}
+
+// --- COLISÕES ---
+function checkCollision(nx, nz) {
+    // Limites do Mapa
+    if (nx > 19 || nx < -19 || nz > 19 || nz < -19) return true;
+    
+    // Verifica as caixas (paredes, cacifos, plantas)
+    for (let box of collidableBoxes) {
+        // Cálculo básico de colisão AABB (Axis-Aligned Bounding Box)
+        let dx = Math.abs(nx - box.x);
+        let dz = Math.abs(nz - box.z);
+        
+        if (box.rot === 0) {
+            if (dx < (box.w/2 + 0.5) && dz < (box.d/2 + 0.5)) return true;
+        } else {
+            if (dx < (box.d/2 + 0.5) && dz < (box.w/2 + 0.5)) return true;
+        }
+    }
+    return false;
 }
 
 let lastTime = performance.now();
@@ -267,32 +335,49 @@ function animate() {
       dir.normalize().applyEuler(new THREE.Euler(0, yaw, 0));
       const nx = player.position.x + dir.x * speed * delta;
       const nz = player.position.z + dir.z * speed * delta;
-      if (Math.abs(nx) < 19 && Math.abs(nz) < 19) { // Limites da escola
-        player.position.x = nx;
-        player.position.z = nz;
-      }
+      
+      // Movimento separado em X e Z para deslizar pelas paredes
+      if (!checkCollision(nx, player.position.z)) player.position.x = nx;
+      if (!checkCollision(player.position.x, nz)) player.position.z = nz;
     }
-    socket.emit('move', { roomId, x: player.position.x, z: player.position.z, yaw });
 
-    const d = helena.position.distanceTo(player.position);
+    // Escadas (Lógica simplificada: se estiver na zona das escadas, sobe a câmara)
+    if (player.position.x > 12 && player.position.x < 18 && player.position.z > -5 && player.position.z < 5) {
+        player.position.y += (6 - player.position.y) * 2 * delta; // Sobe até 6
+    } else if (player.position.x < 12 && player.position.y > 1.6) {
+        player.position.y -= (player.position.y - 1.6) * 4 * delta; // Desce se sair das escadas
+    }
+
+    socket.emit('move', { roomId, x: player.position.x, z: player.position.z, yaw, y: player.position.y });
+
+    const d = helena.position.distanceTo(new THREE.Vector3(player.position.x, 0, player.position.z));
     if (d > 1) {
       const dirE = new THREE.Vector3().subVectors(player.position, helena.position).normalize();
       helena.position.add(dirE.multiplyScalar(enemySpeed * delta));
+      helena.position.y = player.position.y > 3 ? 5 : 0; // Ela sobe se tu subires
       helena.lookAt(player.position.x, helena.position.y + 2.2, player.position.z);
     }
+    
     if (d < 1.5) triggerDeath();
 
-    manuals.forEach((m) => {
+    // Apanhar Manuais
+    manuals.forEach((m, idx) => {
       if (m.visible && player.position.distanceTo(m.position) < 2) {
         m.visible = false;
         socket.emit('collectManual', { roomId });
         collected++;
         document.getElementById('count').innerText = collected;
-        if (collected >= 6) {
-            endGame("VITÓRIA!", "Encontraste todos os manuais e escapaste da Helena!");
-            socket.emit('gameWon'); // Avisa os outros jogadores
-        }
+        if (collected >= 6) endGame("VITÓRIA!", "Escapaste da Helena Alves!");
       }
+    });
+
+    // Apanhar Diários (Sanidade)
+    diaries.forEach((d) => {
+        if (d.visible && player.position.distanceTo(d.position) < 2) {
+            d.visible = false;
+            sanity++;
+            document.getElementById('sanityHud').innerText = `Sanidade: ${sanity} (Apanha diários para +1)`;
+        }
     });
   }
 
@@ -304,11 +389,19 @@ function animate() {
 }
 
 function triggerDeath() {
+  if (sanity > 1) {
+      // Tem sanidade, sobrevive mas é teletransportado
+      sanity--;
+      document.getElementById('sanityHud').innerText = `Sanidade: ${sanity} (Apanha diários para +1)`;
+      player.position.set(-15, 1.6, -15); // Manda para longe
+      helena.position.set(15, 0, 15);
+      return;
+  }
+
   dead = true;
   const jumpDiv = document.getElementById('jump');
   jumpDiv.style.display = 'block';
-  jumpDiv.style.backgroundImage = "url('/helena.jpg')"; // Usa a foto no susto
-  
+  jumpDiv.style.backgroundImage = "url('/helena.jpg')"; 
   socket.emit('died', { roomId });
   
   setTimeout(() => {
@@ -320,8 +413,8 @@ function triggerDeath() {
   }, 5000);
 }
 
-// --- EVENTOS DO SERVIDOR (SOCKET) ---
-socket.on('playerMoved', ({id, x, z, yaw}) => {
+// --- REDE ---
+socket.on('playerMoved', ({id, x, z, y, yaw}) => {
   if (!otherPlayers[id]) {
     const g = new THREE.Group();
     const b = new THREE.Mesh(new THREE.BoxGeometry(0.8,1.8,0.4), new THREE.MeshStandardMaterial({color:0x3366ff}));
@@ -329,26 +422,18 @@ socket.on('playerMoved', ({id, x, z, yaw}) => {
     scene.add(g);
     otherPlayers[id] = g;
   }
-  otherPlayers[id].position.set(x, 0, z);
+  otherPlayers[id].position.set(x, y, z);
   otherPlayers[id].rotation.y = yaw;
 });
-
 socket.on('playerLeft', ({id}) => {
   if (otherPlayers[id]) { scene.remove(otherPlayers[id]); delete otherPlayers[id]; }
 });
-
 socket.on('manualCount', (n) => {
   collected = n;
   document.getElementById('count').innerText = n;
 });
-
-socket.on('gameWon', () => {
-    endGame("VITÓRIA!", "A tua equipa encontrou os 6 manuais e escapou!");
-});
-
-socket.on('gameOver', () => { 
-    endGame("GAME OVER", "Todos os jogadores foram apanhados pela Helena Alves. A escola fica para ela..."); 
-});
+socket.on('gameWon', () => endGame("VITÓRIA!", "A equipa encontrou os manuais!"));
+socket.on('gameOver', () => endGame("GAME OVER", "Todos foram apanhados pela Helena."));
 </script>
 </body>
 </html>
