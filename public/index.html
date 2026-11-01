@@ -520,375 +520,496 @@ function animate() {
         const dirE = new THREE.Vector3().subVectors(new THREE.Vector3(player.position.x, 0, player.position.z), new THREE.Vector3(helena.position.x, 0, helena.position.z)).normalize();
         const nextX = helena.position.x + dirE.x * eSpeed * delta;
         const nextZ = helena.position.z + dirE.z *
-          dirE.z * eSpeed * delta;
-        helena.position.x = nextX;
-        helena.position.z = nextZ;
-        helena.lookAt(player.position.x, helena.position.y, player.position.z);
-
-        // Verificar Jumpscare da Helena (Agarra o aluno se estiver perto)
-        let distH = player.position.distanceTo(helena.position);
-        if (distH < 2.0 && !qteActive) {
-            triggerQTE();
-        }
-    }
-
-    // Atualizar Câmara do Jogador
-    camera.position.copy(player.position);
-    camera.rotation.set(0, 0, 0);
-    camera.rotation.y = yaw;
-    camera.rotation.x = pitch;
-
-    // Verificar Recolha de Manuais
-    manuals.forEach((m, idx) => {
-        if (m && player.position.distanceTo(m.position) < 1.5) {
-            scene.remove(m);
-            manuals[idx] = null;
-            collected++;
-            document.getElementById('count').innerText = collected;
-            document.getElementById('statusHud').innerText = "Manual encontrado! Mais perto da nota 20.";
-            if (collected >= 6) {
-                document.getElementById('questHud').innerText = "Objetivo: Foge para a saída principal!";
-                unlockExit();
-            }
-        }
-    });
-
-    // Verificar Recolha de Pilhas
-    batteries.forEach((b, idx) => {
-        if (b && player.position.distanceTo(b.position) < 1.5) {
-            scene.remove(b);
-            batteries[idx] = null;
-            flashlightPower = Math.min(100, flashlightPower + 35);
-            document.getElementById('statusHud').innerText = "Lanterna recarregada com pilhas novas!";
-        }
-    });
-
-    renderer.render(scene, camera);
-}
-
-// --- MECÂNICA DE QTE / JUMPSCARE ---
-function triggerQTE() {
-    qteActive = true; canMove = false; qteCount = 0;
-    document.getElementById('qteCount').innerText = `0 / 15`;
-    qteScreen.style.display = 'flex';
-    document.getElementById('statusHud').innerText = "A HELENA APANHOU-TE A FUGIR À CLASSE!";
-}
-
-function unlockExit() {
-    // Criar portão de saída no corredor principal
-    const exitGate = new THREE.Mesh(new THREE.BoxGeometry(4, 5, 0.5), new THREE.MeshStandardMaterial({color:0x00ff00, emissive:0x005500}));
-    exitGate.position.set(0, 2.5, -29);
-    scene.add(exitGate);
-    interactables.push({ mesh: exitGate, type: 'exit', x: 0, z: -29 });
-}
-
-// --- EXPANSÃO DE ÁREAS: CANTINA DA GRAMÁTICA ---
-function buildCanteenArea() {
-    const tableMat = new THREE.MeshStandardMaterial({color: 0x8b4513});
-    // Mesas de refeitório na zona norte
-    for(let x = -20; x <= 20; x += 10) {
-        const canteenTable = new THREE.Mesh(new THREE.BoxGeometry(6, 1, 2), tableMat);
-        canteenTable.position.set(x, 0.5, -20);
-        canteenTable.castShadow = true; canteenTable.receiveShadow = true;
-        scene.add(canteenTable);
-        walls.push({ x: x, z: -20, w: 6, d: 2, rot: 0 });
-    }
-}
-buildCanteenArea();
-  // --- MULTIPLAYER E OUTROS JOGADORES ---
-    socket.on('currentPlayers', (players) => {
-        Object.keys(players).forEach(id => {
-            if (id === socket.id) return;
-            createOtherPlayer(id, players[id]);
-        });
-    });
-
-    socket.on('newPlayer', (playerInfo) => {
-        createOtherPlayer(playerInfo.id, playerInfo);
-    });
-
-    socket.on('playerMoved', (playerInfo) => {
-        if (otherPlayers[playerInfo.id]) {
-            otherPlayers[playerInfo.id].position.set(playerInfo.x, playerInfo.y, playerInfo.z);
-            otherPlayers[playerInfo.id].rotation.y = playerInfo.yaw;
-        }
-    });
-
-    socket.on('playerDisconnected', (id) => {
-        if (otherPlayers[id]) {
-            scene.remove(otherPlayers[id]);
-            delete otherPlayers[id];
-        }
-    });
-
-    function createOtherPlayer(id, info) {
-        const pGeo = new THREE.BoxGeometry(0.8, 1.8, 0.8);
-        const pMat = new THREE.MeshStandardMaterial({color: 0x0055ff});
-        const mesh = new THREE.Mesh(pGeo, pMat);
-        mesh.position.set(info.x, info.y, info.z);
-        scene.add(mesh);
-        otherPlayers[id] = mesh;
-    }
-
-    // --- POWER-UPS: CAFÉ DA SALA DE PROFESSORES ---
-    let coffees = [];
-    function spawnCoffees() {
-        for(let i=0; i<3; i++) {
-            const coffee = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.5, 8), new THREE.MeshStandardMaterial({color: 0x8b5a2b, emissive: 0x3d2314}));
-            coffee.position.set(-20 + Math.random()*40, 0.5, -20 + Math.random()*40);
-            scene.add(coffee);
-            coffees.push(coffee);
-        }
-    }
-    spawnCoffees();
-
-    function checkPowerUps() {
-        coffees.forEach((c, idx) => {
-            if (c && player.position.distanceTo(c.position) < 1.5) {
-                scene.remove(c);
-                coffees[idx] = null;
-                speedBoostTime = Date.now() + 8000; // 8 segundos de velocidade extra
-                document.getElementById('statusHud').innerText = "Bebeste café da sala de professores! Velocidade máxima!";
-            }
-        });
-    }
-
-    // --- SEGUNDO PUZZLE: EXAME DE GRAMÁTICA (MORFOLOGIA) ---
-    function openGrammarPuzzle() {
-        puzzleActive = true; canMove = false; document.exitPointerLock();
-        
-        const questions = [
-            { question: "Qual é a classe da palavra 'rapidamente'?", options: ["Adjetivo", "Advérbio de Modo", "Nome", "Verbo"], correct: "Advérbio de Modo" },
-            { question: "Identifica o tempo verbal em: 'Nós estudámos'", options: ["Pretérito Perfeito", "Presente do Indicativo", "Futuro", "Pretérito Imperfeito"], correct: "Pretérito Perfeito" },
-            { question: "O que indica a conjunção coordenativa 'mas'?", options: ["Adição", "Oposição / Contraste", "Alternativa", "Causa"], correct: "Oposição / Contraste" }
-        ];
-        
-        const q = questions[Math.floor(Math.random()*questions.length)];
-        
-        let pScreen = document.getElementById('grammarPuzzleScreen');
-        if(!pScreen) {
-            pScreen = document.createElement('div');
-            pScreen.id = 'grammarPuzzleScreen';
-            pScreen.className = 'popup';
-            document.body.appendChild(pScreen);
-        }
-        pScreen.innerHTML = `
-            <h2>EXAME DE GRAMÁTICA</h2>
-            <p>${q.question}</p>
-            <div class="options" id="grammarOptions"></div>
-        `;
-        const optsDiv = document.getElementById('grammarOptions');
-        q.options.forEach(opt => {
-            const btn = document.createElement('button');
-            btn.innerText = opt;
-            btn.onclick = () => {
-                if(opt === q.correct) {
-                    pScreen.style.display = 'none';
-                    puzzleActive = false; canMove = true; document.body.requestPointerLock();
-                    document.getElementById('statusHud').innerText = "Resposta certa! A Helena ficou baralhada.";
-                    helenaIsStunned = Date.now() + 5000;
-                } else {
-                    pScreen.style.display = 'none';
-                    puzzleActive = false; canMove = true; document.body.requestPointerLock();
-                    helenaSpeed += 1.5;
-                    document.getElementById('statusHud').innerText = "Resposta errada! A Helena enfureceu-se!";
-                }
-            };
-            optsDiv.appendChild(btn);
-        });
-        pScreen.style.display = 'flex';
-    }
-
-    // Adicionar portão de gramática na escola
-    const grammarGate = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 0.5), new THREE.MeshStandardMaterial({color:0x0055ff}));
-    grammarGate.position.set(-20, 2, 0); scene.add(grammarGate);
-    interactables.push({ mesh: grammarGate, type: 'grammar', x: -20, z: 0 });
-    walls.push({ x: -20, z: 0, w: 4, d: 1, rot: 0 });
-
-    // Atualizar checkInteract para incluir gramática e saída
-    const baseCheckInteract = checkInteract;
-    checkInteract = function() {
-        baseCheckInteract();
-        for(let obj of interactables) {
-            let dist = Math.sqrt(Math.pow(player.position.x - obj.x, 2) + Math.pow(player.position.z - obj.z, 2));
-            if(dist < 3) {
-                if (obj.type === 'grammar') openGrammarPuzzle();
-                if (obj.type === 'exit' && collected >= 6) {
-                    running = false;
-                    document.exitPointerLock();
-                    document.getElementById('endTitle').innerText = "VITÓRIA!";
-                    document.getElementById('endTitle').style.color = "#00ff00";
-                    document.getElementById('endMessage').innerText = "Fugiste da Helena com nota máxima 20!";
-                    gameOverScreen.style.display = 'flex';
-                }
-            }
-        }
-    };
-  // --- MECÂNICA DE ESCONDERIJO (CACIFOS) ---
-let isHidden = false;
-
-function buildLockersArea() {
-    const lockerMat = new THREE.MeshStandardMaterial({color: 0x2b3e50});
-    for(let z = -15; z <= 15; z += 5) {
-        const locker = new THREE.Mesh(new THREE.BoxGeometry(1.5, 4, 1), lockerMat);
-        locker.position.set(28, 2, z);
-        locker.castShadow = true; locker.receiveShadow = true;
-        scene.add(locker);
-        walls.push({ x: 28, z: z, w: 1.5, d: 1, rot: 0 });
-        interactables.push({ mesh: locker, type: 'locker', x: 28, z: z });
-    }
-}
-buildLockersArea();
-
-// Estender interações para incluir cacifos
-const previousCheckInteract = checkInteract;
-checkInteract = function() {
-    previousCheckInteract();
-    for(let obj of interactables) {
-        let dist = Math.sqrt(Math.pow(player.position.x - obj.x, 2) + Math.pow(player.position.z - obj.z, 2));
-        if(dist < 3) {
-            if (obj.type === 'locker') {
-                isHidden = !isHidden;
-                if (isHidden) {
-                    canMove = false;
-                    document.getElementById('statusHud').innerText = "Escondido no cacifo! Fica em silêncio...";
-                    player.position.set(obj.x - 1.2, player.position.y, obj.z);
-                } else {
-                    canMove = true;
-                    document.getElementById('statusHud').innerText = "Saíste do cacifo. Cuidado!";
-                }
-            }
-        }
-    }
-};
-
-// --- NOVA ÁREA: BIBLIOTECA PROIBIDA ---
-function buildForbiddenLibrary() {
-    const shelfMat = new THREE.MeshStandardMaterial({color: 0x3d2314});
-    for(let x = -25; x <= -5; x += 6) {
-        const shelf = new THREE.Mesh(new THREE.BoxGeometry(1.2, 5, 3), shelfMat);
-        shelf.position.set(x, 2.5, 25);
-        shelf.castShadow = true; shelf.receiveShadow = true;
-        scene.add(shelf);
-        walls.push({ x: x, z: 25, w: 1.2, d: 3, rot: 0 });
-    }
-}
-buildForbiddenLibrary();
-
-// Atualizar a verificação dos power-ups de café no loop principal
-// (Certifica-te de que chamas checkPowerUps() dentro da função animate se necessário)
-  // --- MULTIPLAYER AVANÇADO (SUAVIZAÇÃO E LANTERNAS DOS COLEGAS) ---
-let targetPositions = {};
-
-socket.on('currentPlayers', (players) => {
-    Object.keys(players).forEach(id => {
-        if (id === socket.id) return;
-        createOtherPlayer(id, players[id]);
-    });
-});
-
-socket.on('newPlayer', (playerInfo) => {
-    createOtherPlayer(playerInfo.id, playerInfo);
-});
-
-socket.on('playerMoved', (playerInfo) => {
-    if (otherPlayers[playerInfo.id]) {
-        targetPositions[playerInfo.id] = {
-            x: playerInfo.x,
-            y: playerInfo.y,
-            z: playerInfo.z,
-            yaw: playerInfo.yaw,
-            flashlight: playerInfo.flashlight
-        };
-    }
-});
-
-socket.on('playerDisconnected', (id) => {
-    if (otherPlayers[id]) {
-        scene.remove(otherPlayers[id]);
-        delete otherPlayers[id];
-        delete targetPositions[id];
-    }
-});
-
-function createOtherPlayer(id, info) {
-    const group = new THREE.Group();
-    const pGeo = new THREE.BoxGeometry(0.8, 1.8, 0.8);
-    const pMat = new THREE.MeshStandardMaterial({color: 0x0055ff});
-    const mesh = new THREE.Mesh(pGeo, pMat);
-    mesh.castShadow = true;
-    group.add(mesh);
-
-    // Lanterna visível no colega
-    const pLight = new THREE.SpotLight(0xffeedd, 2, 20, Math.PI/5, 0.5, 1.5);
-    pLight.position.set(0.4, 0, -0.5);
-    pLight.target.position.set(0, 0, -2);
-    group.add(pLight);
-    group.add(pLight.target);
-
-    group.position.set(info.x, info.y, info.z);
-    scene.add(group);
-    otherPlayers[id] = group;
-    targetPositions[id] = { x: info.x, y: info.y, z: info.z, yaw: info.yaw };
-}
-
-// Função para suavizar o movimento dos outros jogadores no loop
-function updateOtherPlayers(delta) {
-    Object.keys(otherPlayers).forEach(id => {
-        const p = otherPlayers[id];
-        const target = targetPositions[id];
-        if (p && target) {
-            // Lerp (interpolação linear) para suavizar a transição
-            p.position.x += (target.x - p.position.x) * 12 * delta;
-            p.position.y += (target.y - p.position.y) * 12 * delta;
-            p.position.z += (target.z - p.position.z) * 12 * delta;
-            p.rotation.y = target.yaw;
-        }
-    });
-}
-
-// Atualiza o envio do socket no teu loop principal para enviar também o estado da lanterna:
-// socket.emit('move', { roomId, x: player.position.x, y: player.position.y, z: player.position.z, yaw, flashlight: isFlashlightOn });
-  // --- MELHORIA DA IA DA HELENA: PERSEGUIÇÃO INTELIGENTE E FLUTUAÇÃO ---
-function updateHelenaAI(delta) {
-    if (Date.now() <= helenaIsStunned) return;
-
-    // Se o jogador estiver escondido no cacifo, ela perde o rasto
-    if (isHidden) {
-        return; 
-    }
-
-    let eSpeed = helenaSpeed + (Date.now() < helenaFuryTime ? 3 : 0);
-    let distToPlayer = helena.position.distanceTo(player.position);
-
-    // Se a lanterna estiver acesa e perto, ela deteta-te mais rápido
-    if (isFlashlightOn && distToPlayer < 15) {
-        eSpeed += 1.5;
-        document.getElementById('statusHud').innerText = "A Helena viu o feixe da tua lanterna!";
-    }
-
-    const dirE = new THREE.Vector3().subVectors(
-        new THREE.Vector3(player.position.x, 0, player.position.z), 
-        new THREE.Vector3(helena.position.x, 0, helena.position.z)
-    ).normalize();
-
-    helena.position.x += dirE.x * eSpeed * delta;
-    helena.position.z += dirE.z * eSpeed * delta;
+          // Continuação e Expansão da IA da Helena e Novas Mecânicas
+    const nextX = helena.position.x + dirE.x * eSpeed * delta;
+    const nextZ = helena.position.z + dirE.z * eSpeed * delta;
+    if (!checkCollision(nextX, helena.position.z)) helena.position.x = nextX;
+    if (!checkCollision(helena.position.x, nextZ)) helena.position.z = nextZ;
     helena.lookAt(player.position.x, helena.position.y, player.position.z);
 
-    // Efeito de flutuação assustadora (movimento sinusoidal)
-    helena.position.y = Math.sin(performance.now() * 0.006) * 0.3;
-
-    // Jumpscare se estiver perto e não estiveres escondido
-    if (distToPlayer < 2.0 && !qteActive) {
-        triggerQTE();
+    // Detecção de colisão com o Jogador (Game Over)
+    let distHelena = player.position.distanceTo(helena.position);
+    if (distHelena < 2.0 && !isHiding) {
+        dead = true;
+        document.exitPointerLock();
+        document.getElementById('endTitle').innerText = "REPROVADO A PORTUGUÊS!";
+        document.getElementById('endMessage').innerText = "A professora Helena Alves apanhou-te com uma negativa histórica de 0 valores!";
+        gameOverScreen.style.display = 'flex';
     }
+
+    // Efeito de vinheta vermelha se a Helena estiver perto
+    const bloodOverlay = document.getElementById('bloodOverlay');
+    if (distHelena < 10) {
+        bloodOverlay.style.opacity = (10 - distHelena) / 10;
+    } else {
+        bloodOverlay.style.opacity = 0;
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+// --- EXPANSÃO DE ÁREAS E MOBÍLIA DA ESCOLA ---
+// Podes chamar esta função no initThree() para expandir o mapa original
+function buildExpandedSchoolAreas() {
+    const wallMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('wall'), roughness: 0.9});
+    
+    // 1. Cantina (Ala Direita)
+    addCustomRoom(35, -20, 20, 20, "Cantina Escolar");
+    // Mesas de refeitório na cantina
+    for(let i=0; i<3; i++) {
+        const canteenTable = new THREE.Mesh(new THREE.BoxGeometry(4, 0.2, 2), new THREE.MeshStandardMaterial({color: 0x8b4513}));
+        canteenTable.position.set(30 + (i*6), 1, -20);
+        canteenTable.castShadow = true; scene.add(canteenTable);
+        walls.push({ x: 30 + (i*6), z: -20, w: 4, d: 2, rot: 0 });
+    }
+
+    // 2. Sala de Professores (Ala Esquerda Profunda)
+    addCustomRoom(-35, -20, 20, 20, "Sala de Professores");
+    
+    // 3. Secretaria e Cofre de Provas (Fundo Extremo)
+    addCustomRoom(0, -45, 30, 15, "Secretaria");
+
+    // Adicionar Cacifos para Esconderijo (Mecânica Nova)
+    spawnHidingLockers();
+    
+    // Adicionar Novos Itens Especiais (Caneta Vermelha e Corretor)
+    spawnSpecialItems();
+}
+
+function addCustomRoom(x, z, w, d, name) {
+    const wallMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('wall'), roughness: 0.9});
+    // Paredes simples para a nova sala
+    const w1 = new THREE.Mesh(new THREE.BoxGeometry(w, 6, 1), wallMat);
+    w1.position.set(x, 3, z - d/2); scene.add(w1);
+    walls.push({ x: x, z: z - d/2, w: w, d: 1, rot: 0 });
+
+    const w2 = new THREE.Mesh(new THREE.BoxGeometry(w, 6, 1), wallMat);
+    w2.position.set(x, 3, z + d/2); scene.add(w2);
+    walls.push({ x: x, z: z + d/2, w: w, d: 1, rot: 0 });
+
+    const w3 = new THREE.Mesh(new THREE.BoxGeometry(1, 6, d), wallMat);
+    w3.position.set(x - w/2, 3, z); scene.add(w3);
+    walls.push({ x: x - w/2, z: z, w: 1, d: d, rot: 0 });
+
+    const w4 = new THREE.Mesh(new THREE.BoxGeometry(1, 6, d), wallMat);
+    w4.position.set(x + w/2, 3, z); scene.add(w4);
+    walls.push({ x: x + w/2, z: z, w: 1, d: d, rot: 0 });
+}
+
+// --- NOVAS MECÂNICAS: ESCONDERIJO E ITENS DEFENSOVOS ---
+let isHiding = false;
+let specialItems = [];
+
+function spawnHidingLockers() {
+    // Cacifos interativos para se esconder ao premir 'C'
+    const lockerGeo = new THREE.BoxGeometry(1.2, 4, 1);
+    const lockerMat = new THREE.MeshStandardMaterial({color: 0x2b3e50, roughness: 0.5});
+    
+    const positions = [[-9, 5], [-9, 10], [9, 5], [25, -10]];
+    positions.forEach(([x, z]) => {
+        const locker = new THREE.Mesh(lockerGeo, lockerMat);
+        locker.position.set(x, 2, z);
+        scene.add(locker);
+        walls.push({ x, z, w: 1.2, d: 1, rot: 0 });
+        interactables.push({ mesh: locker, type: 'locker', x, z });
+    });
+}
+
+function spawnSpecialItems() {
+    // Caneta Vermelha (Atordoa a Helena) e Corretor Líquido (Cegueira temporária)
+    const penGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.8);
+    const penMat = new THREE.MeshStandardMaterial({color: 0xff0000, emissive: 0x550000});
+    
+    const redPen = new THREE.Mesh(penGeo, penMat);
+    redPen.position.set(-35, 1, -20);
+    scene.add(redPen);
+    specialItems.push({ mesh: redPen, type: 'redPen', x: -35, z: -20 });
+}
+
+// Tecla 'C' para entrar/sair dos cacifos (Esconderijo)
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyC' && running && !dead) {
+        checkHidingSpot();
+    }
+    if (e.code === 'KeyQ' && hasRedPen) {
+        useRedPen();
+    }
+});
+
+function checkHidingSpot() {
+    for (let obj of interactables) {
+        if (obj.type === 'locker') {
+            let dist = player.position.distanceTo(new THREE.Vector3(obj.x, player.position.y, obj.z));
+            if (dist < 2.5) {
+                isHiding = !isHiding;
+                if (isHiding) {
+                    player.position.set(obj.x, 1.6, obj.z + 1.2); // Fica à frente/dentro do cacifo
+                    canMove = false;
+                    document.getElementById('statusHud').innerText = "Estado: Escondido no Cacifo (Helena não te vê!)";
+                } else {
+                    canMove = true;
+                    document.getElementById('statusHud').innerText = "Estado: Normal";
+                }
+                return;
+            }
+        }
+    }
+}
+
+let hasRedPen = false;
+function useRedPen() {
+    hasRedPen = false;
+    helenaIsStunned = Date.now() + 6000; // 6 segundos de atordoamento
+    document.getElementById('statusHud').innerText = "Atiraste a Caneta Vermelha! A Helena está a corrigir os teus erros em pânico!";
+}// --- SEGUNDA EXTENSÃO: MAPA MULTI-ANDAR E NOVAS SALAS ---
+
+// Chamar esta função dentro do initThree() para construir o 2º andar e o laboratório
+function buildAdvancedMapExtensions() {
+    const wallMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('wall'), roughness: 0.9});
+    const floorMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('floor'), roughness: 0.8});
+
+    // 1. Chão e Teto do 2º Andar (Y = 6)
+    const floor2 = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), floorMat);
+    floor2.rotation.x = -Math.PI/2;
+    floor2.position.set(0, 6, 0);
+    floor2.receiveShadow = true;
+    scene.add(floor2);
+
+    const ceiling2 = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({color: 0x0a0a0a}));
+    ceiling2.rotation.x = Math.PI/2;
+    ceiling2.position.set(0, 12, 0);
+    scene.add(ceiling2);
+
+    // 2. Escadaria de Acesso ao 2º Andar
+    buildStairs();
+
+    // 3. Laboratório de Fonética (2º Andar - Ala Esquerda)
+    addCustomRoom2ndFloor(-20, -15, 20, 20, "Laboratório de Fonética");
+    spawnLabProps();
+
+    // 4. Biblioteca Avançada / Corredores Labirínticos no 2º Andar
+    buildLibraryMazes();
+}
+
+function buildStairs() {
+    const stairMat = new THREE.MeshStandardMaterial({color: 0x4a2e15});
+    // Criar degraus da escada no canto do mapa
+    for (let i = 0; i < 15; i++) {
+        const step = new THREE.Mesh(new THREE.BoxGeometry(3, 0.4, 1), stairMat);
+        step.position.set(25, i * 0.4 + 0.2, 15 - (i * 0.8));
+        step.castShadow = true; step.receiveShadow = true;
+        scene.add(step);
+        // Colisão simples para os degraus
+        walls.push({ x: 25, z: 15 - (i * 0.8), w: 3, d: 1, rot: 0 });
+    }
+}
+
+function addCustomRoom2ndFloor(x, z, w, d, name) {
+    const wallMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('wall'), roughness: 0.9});
+    const h = 6; // Altura do piso
+    
+    // Paredes do 2º andar (deslocadas Y para cima em 6)
+    const w1 = new THREE.Mesh(new THREE.BoxGeometry(w, h, 1), wallMat);
+    w1.position.set(x, 6 + h/2, z - d/2); scene.add(w1);
+    walls.push({ x: x, z: z - d/2, w: w, d: 1, rot: 0 });
+
+    const w2 = new THREE.Mesh(new THREE.BoxGeometry(w, h, 1), wallMat);
+    w2.position.set(x, 6 + h/2, z + d/2); scene.add(w2);
+    walls.push({ x: x, z: z + d/2, w: w, d: 1, rot: 0 });
+
+    const w3 = new THREE.Mesh(new THREE.BoxGeometry(1, h, d), wallMat);
+    w3.position.set(x - w/2, 6 + h/2, z); scene.add(w3);
+    walls.push({ x: x - w/2, z: z, w: 1, d: d, rot: 0 });
+}
+
+function spawnLabProps() {
+    // Bancadas de laboratório com tubos de ensaio falsos
+    const benchMat = new THREE.MeshStandardMaterial({color: 0xcccccc});
+    for(let i = 0; i < 2; i++) {
+        const bench = new THREE.Mesh(new THREE.BoxGeometry(3, 1.2, 1.5), benchMat);
+        bench.position.set(-20 + (i * 5), 6.6, -15);
+        bench.castShadow = true; scene.add(bench);
+        walls.push({ x: -20 + (i * 5), z: -15, w: 3, d: 1.5, rot: 0 });
+        
+        // Tubo de ensaio decorativo
+        const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.5), new THREE.MeshBasicMaterial({color: 0x00ffcc}));
+        tube.position.set(-20 + (i * 5), 7.5, -15);
+        scene.add(tube);
+    }
+}
+
+function buildLibraryMazes() {
+    // Estantes de livros altas no 2º andar criando um mini-labirinto
+    const shelfMat = new THREE.MeshStandardMaterial({color: 0x3d2314});
+    const positions = [
+        [0, -5], [5, -5], [0, 5], [5, 5], [-5, 0]
+    ];
+    positions.forEach(([x, z]) => {
+        const shelf = new THREE.Mesh(new THREE.BoxGeometry(1.2, 5, 3), shelfMat);
+        shelf.position.set(x, 6 + 2.5, z);
+        shelf.castShadow = true; shelf.receiveShadow = true;
+        scene.add(shelf);
+        walls.push({ x, z, w: 1.2, d: 3, rot: 0 });
+    });
+}
+  // --- TERCEIRA EXTENSÃO: PÁTIO EXTERIOR E GRÁFICOS AVANÇADOS ---
+
+function buildSpookyCourtyardAndGraphicsUpgrade() {
+    // 1. Melhorar a iluminação global e nevoeiro para um aspeto mais cinematográfico
+    scene.fog = new THREE.FogExp2(0x050508, 0.04);
+    
+    // Luz direcional simulando luar / lâmpadas de rua exteriores
+    const moonLight = new THREE.DirectionalLight(0x445588, 0.8);
+    moonLight.position.set(20, 40, 20);
+    moonLight.castShadow = true;
+    moonLight.shadow.mapSize.width = 2048;
+    moonLight.shadow.mapSize.height = 2048;
+    scene.add(moonLight);
+
+    // 2. Construir o Pátio Exterior (Zona Norte do mapa)
+    const grassMat = new THREE.MeshStandardMaterial({
+        color: 0x112211,
+        roughness: 0.9,
+        metalness: 0.1
+    });
+
+    const courtyard = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), grassMat);
+    courtyard.rotation.x = -Math.PI/2;
+    courtyard.position.set(0, -0.1, -50);
+    courtyard.receiveShadow = true;
+    scene.add(courtyard);
+
+    // Muros exteriores do pátio
+    const wallMat = new THREE.MeshStandardMaterial({color: 0x1f1f1f, roughness: 0.8});
+    
+    // 3. Adicionar Árvores Assombradas no Pátio
+    for (let i = 0; i < 6; i++) {
+        let xPos = -30 + (i * 12);
+        let zPos = -40 - (i % 2 * 15);
+        buildSpookyTree(xPos, zPos);
+    }
+}
+
+function buildSpookyTree(x, z) {
+    const trunkMat = new THREE.MeshStandardMaterial({color: 0x1a110a, roughness: 1.0});
+    const leavesMat = new THREE.MeshStandardMaterial({color: 0x0a1a0a, roughness: 0.9});
+
+    // Tronco
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.9, 6, 6), trunkMat);
+    trunk.position.set(x, 3, z);
+    trunk.castShadow = true;
+    scene.add(trunk);
+    walls.push({ x, z, w: 1, d: 1, rot: 0 });
+
+    // Folhagem escura estilizada
+    const leaves = new THREE.Mesh(new THREE.DodecahedronGeometry(3), leavesMat);
+    leaves.position.set(x, 6.5, z);
+    leaves.castShadow = true;
+    scene.add(leaves);
+}
+  // --- QUARTA EXTENSÃO: MECÂNICAS DE PORTUGUÊS AVANÇADAS ---
+
+let grammaticalTraps = [];
+let verbPuzzleActive = false;
+
+function buildPortugueseGrammarMechanics() {
+    // 1. Criar Armadilhas de Erros Ortográficos / Crases Proibidas pelo chão
+    const trapGeo = new THREE.PlaneGeometry(3, 3);
+    const trapMat = new THREE.MeshBasicMaterial({color: 0xff0000, transparent: true, opacity: 0.3, side: THREE.DoubleSide});
+
+    const trapPositions = [
+        [-5, 5, "Fui a praia (Falta de Crase!)"],
+        [15, -10, "Ele interveio na aula (Verbo Intervir!)"],
+        [-15, -5, "Houveram muitos erros (Erro no Verbo Haver!)"]
+    ];
+
+    trapPositions.forEach(([x, z, text]) => {
+        const trap = new THREE.Mesh(trapGeo, trapMat);
+        trap.rotation.x = -Math.PI/2;
+        trap.position.set(x, 0.05, z);
+        scene.add(trap);
+        grammaticalTraps.push({ x, z, text, active: true });
+    });
+}
+
+// Verificar se o jogador pisou numa armadilha gramatical no loop de movimento
+function checkGrammarTraps() {
+    grammaticalTraps.forEach(trap => {
+        if (trap.active) {
+            let dist = player.position.distanceTo(new THREE.Vector3(trap.x, player.position.y, trap.z));
+            if (dist < 1.5) {
+                trap.active = false;
+                triggerGrammarPenalty(trap.text);
+            }
+        }
+    });
+}
+
+function triggerGrammarPenalty(errorText) {
+    document.getElementById('statusHud').innerText = `ERRO GRAMATICAL: ${errorText}`;
+    helenaSpeed += 1.5; // A Helena fica mais rápida com o teu erro
+    // Efeito de lentidão temporária no jogador
+    speedBoostTime = Date.now() - 3000; // Penalidade de velocidade
+}
+
+// 2. Substituir QTE clássico por Conjugação de Verbos
+function triggerVerbConjugationQTE() {
+    qteActive = true; canMove = false; document.exitPointerLock();
+    
+    const irregularVerbs = [
+        { verb: "Requerer (Pretérito Perfeito - Ele)", options: ["Requereu", "Requis", "Requereu?", "Requeria"], correct: "Requereu" },
+        { verb: "Pôr (Infinitivo Pessoal - 2ª pessoa do plural)", options: a = ["pordes", "pôres", "pondes", "põem"], correct: "pordes" },
+        { verb: "Mediar (Presente do Indicativo - Eu)", options: ["medeio", "medo", "mediarei", "medi"], correct: "medeio" }
+    ];
+
+    const challenge = irregularVerbs[Math.floor(Math.random() * irregularVerbs.length)];
+    
+    // Atualizar o popup de QTE para mostrar o verbo
+    document.querySelector('#qteScreen h2').innerText = "CONJUGAÇÃO DE EMERGÊNCIA!";
+    document.querySelector('#qteScreen p').innerText = `Conjugue corretamente: ${challenge.verb}`;
+    
+    const countEl = document.getElementById('qteCount');
+    countEl.innerHTML = ''; // Limpar contador antigo e colocar botões de opções
+    
+    challenge.options.forEach(opt => {
+        let btn = document.createElement('button');
+        btn.innerText = opt;
+        btn.style.margin = "10px";
+        btn.style.padding = "10px 20px";
+        btn.onclick = () => {
+            if (opt === challenge.correct) {
+                qteActive = false; canMove = true; qteScreen.style.display = 'none';
+                helena.position.set(player.position.x + 20, 0, player.position.z + 20);
+                document.getElementById('statusHud').innerText = "Conjugação Correta! Livraste-te da professora!";
+            } else {
+                helenaSpeed += 2;
+                document.getElementById('statusHud').innerText = "Erro na conjugação! A Helena enfureceu-se!";
+            }
+        };
+        countEl.appendChild(btn);
+    });
+
+    qteScreen.style.display = 'flex';
+}
+  // --- QUINTA EXTENSÃO: IA AVANÇADA DA PROFESSORA HELENA ---
+
+let helenaWaypoints = [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(-25, 0, -10),
+    new THREE.Vector3(25, 0, 20),
+    new THREE.Vector3(0, 0, 25)
+];
+let currentWaypointIndex = 0;
+let helenaState = 'PATROL'; // PATROL, CHASE, INVESTIGATE
+
+function updateHelenaAdvancedAI(delta) {
+    if (!helena) return;
+    
+    let distToPlayer = helena.position.distanceTo(player.position);
+    let canSeePlayer = distToPlayer < 14 && (!isHiding);
+
+    if (canSeePlayer) {
+        helenaState = 'CHASE';
+        document.getElementById('statusHud').innerText = "AVISO: A Helena avistou-te e está a correr atrás de ti!";
+    } else if (helenaState === 'CHASE' && distToPlayer > 22) {
+        helenaState = 'PATROL';
+        document.getElementById('statusHud').innerText = "Estado: Ela perdeu-te o rasto... por enquanto.";
+    }
+
+    if (helenaState === 'PATROL') {
+        let targetWP = helenaWaypoints[currentWaypointIndex];
+        let dir = new THREE.Vector3().subVectors(targetWP, helena.position);
+        if (dir.length() < 2) {
+            currentWaypointIndex = (currentWaypointIndex + 1) % helenaWaypoints.length;
+        } else {
+            dir.normalize();
+            helena.position.addScaledVector(dir, helenaSpeed * 0.5 * delta);
+        }
+    } else if (helenaState === 'CHASE') {
+        let dir = new THREE.Vector3().subVectors(player.position, helena.position).normalize();
+        helena.position.addScaledVector(dir, helenaSpeed * delta);
+    }
+
+    helena.lookAt(player.position.x, helena.position.y, player.position.z);
+}
+  // --- SEXTA EXTENSÃO: MECÂNICAS MASSIVAS (FADIGA, SINO E PROVAS ESCRITAS) ---
+
+let stamina = 100;
+let isExhausted = false;
+let dictionariesCollected = 0;
+let examActive = false;
+
+// 1. Sistema de Stamina e Fadiga ao Correr
+function updateStamina(delta, isRunning) {
+    if (isRunning && !isExhausted) {
+        stamina -= delta * 30;
+        if (stamina <= 0) {
+            stamina = 0;
+            isExhausted = true;
+            document.getElementById('statusHud').innerText = "Fadiga total! Descansa um pouco!";
+        }
+    } else if (!isRunning && stamina < 100) {
+        stamina += delta * 20;
+        if (stamina > 40) isExhausted = false;
+    }
+}
+
+// 2. O Sino da Escola (Distração da Helena)
+function setupSchoolBell() {
+    const bellGeo = new THREE.CylinderGeometry(0.8, 0.8, 1.5);
+    const bellMat = new THREE.MeshStandardMaterial({color: 0xffd700, metalness: 0.8});
+    const bell = new THREE.Mesh(bellGeo, bellMat);
+    bell.position.set(0, 4, 0);
+    scene.add(bell);
+    interactables.push({ mesh: bell, type: 'bell', x: 0, z: 0 });
+}
+
+function ringSchoolBell() {
+    helena.position.set(-25, 0, -25); // Teletransporta a Helena para a entrada
+    helenaState = 'PATROL';
+    document.getElementById('statusHud').innerText = "Tocaste o Sino! A Helena foi investigar o átrio!";
+}
+
+// 3. Mini-jogo de Prova Escrita Surpresa
+function triggerExamPopup() {
+    examActive = true; canMove = false; document.exitPointerLock();
+    const questions = [
+        { q: "Qual é o superlativo sintético de 'amigo'?", opts: ["Amiguíssimo", "Muito amigo", "Super amigo"], correct: "Amiguíssimo" },
+        { q: "A palavra 'órfão' classifica-se quanto à acentuação como:", opts: ["Aguda", "Grave", "Esdrúxula"], correct: "Grave" },
+        { q: "Qual destas palavras contém um ditongo nasal?", opts: ["Pão", "Mãe", "Ambas as anteriores"], correct: "Ambas as anteriores" }
+    ];
+    let currentQ = questions[Math.floor(Math.random() * questions.length)];
+    
+    let screen = document.getElementById('puzzleScreen');
+    document.getElementById('rimetarget').innerText = currentQ.q;
+    let optsDiv = document.getElementById('puzzleOptions');
+    optsDiv.innerHTML = '';
+    
+    currentQ.opts.forEach(opt => {
+        let btn = document.createElement('button');
+        btn.innerText = opt;
+        btn.onclick = () => {
+            if(opt === currentQ.correct) {
+                screen.style.display = 'none';
+                examActive = false; canMove = true; document.body.requestPointerLock();
+                document.getElementById('statusHud').innerText = "Positiva no Teste! Ganhaste avanço!";
+            } else {
+                helenaSpeed += 1.5;
+                screen.style.display = 'none';
+                examActive = false; canMove = true; document.body.requestPointerLock();
+                document.getElementById('statusHud').innerText = "Negativa no Teste! A Helena enfureceu-se!";
+            }
+        };
+        optsDiv.appendChild(btn);
+    });
+    screen.style.display = 'flex';
 }
   <!DOCTYPE html>
 <html lang="pt">
 <head>
 <meta charset="UTF-8">
-<title>Helena Alves: O Pesadelo de Português</title>
+<title>Helena Alves: O Pesadelo de Português (Versão Final Polida)</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Creepster&family=Special+Elite&display=swap');
   
@@ -896,43 +1017,40 @@ function updateHelenaAI(delta) {
   canvas{display:block}
   
   /* Ecrãs */
-  .screen { position:absolute; inset:0; background:rgba(0,0,0,0.95); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:100; gap:15px; text-align: center; }
+  .screen { position:absolute; inset:0; background:rgba(0,0,0,0.96); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:100; gap:15px; text-align: center; }
   .screen h1 { color: #8b0000; text-shadow: 3px 3px 6px #000; font-size: 55px; margin-bottom: 0; font-family: 'Creepster', cursive; letter-spacing: 2px;}
   .screen p { color: #ccc; max-width: 600px; line-height: 1.5; font-size: 18px;}
   .screen input{padding:12px;font-size:18px;width:250px;text-align:center; background: #111; color: #0f0; border: 2px solid #333; font-family: 'Special Elite';}
   .screen button{padding:15px 30px;font-size:18px;background:#8b0000;color:#fff;border:2px solid #fff;cursor:pointer; font-weight: bold; margin: 5px; transition: 0.3s; font-family: 'Special Elite';}
   .screen button:hover { background: #ff0000; transform: scale(1.05); box-shadow: 0 0 15px red;}
   
-  /* HUD */
+  /* HUD Polido */
   #hud{position:absolute;bottom:20px;left:20px;font-size:18px;text-shadow: 2px 2px 3px #000; z-index: 10; background: rgba(0,0,0,0.8); padding: 15px; border-left: 5px solid #8b0000; border-radius: 4px;}
   #statusHud { color: #00ffcc; font-weight: bold; }
   #batteryHud { color: #ffaa00; font-weight: bold; }
-  #questHud { position:absolute; top:20px; right:20px; text-align:right; font-size:18px; color: #ffcc00; z-index:10; background: rgba(0,0,0,0.8); padding: 10px 15px; border-radius: 4px;}
+  #staminaHud { color: #00ffff; font-weight: bold; }
+  #questHud { position:absolute; top:20px; right:20px; text-align:right; font-size:18px; color: #ffcc00; z-index:10; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 4px;}
   
-  /* Minimap QoL */
-  #minimapContainer { position: absolute; top: 20px; left: 20px; z-index: 10; background: rgba(0,0,0,0.85); border: 2px solid #8b0000; border-radius: 8px; padding: 5px; }
-  #minimap { width: 150px; height: 150px; display: block; }
-
-  /* QTE e Puzzles */
-  .popup { position:absolute; inset:0; background:rgba(0,0,0,0.85); display:none; flex-direction:column; align-items:center; justify-content:center; z-index:200; text-align:center; }
+  /* Popups e QTEs */
+  .popup { position:absolute; inset:0; background:rgba(0,0,0,0.9); display:none; flex-direction:column; align-items:center; justify-content:center; z-index:200; text-align:center; }
   .popup h2 { font-size: 40px; color: #ff0000; text-shadow: 0 0 10px #000; margin: 0;}
-  .popup p { font-size: 25px; color: #fff; }
-  .popup .options button { display: block; margin: 10px auto; width: 300px; padding: 15px; font-size: 20px; background: #222; border: 1px solid #555; cursor: pointer;}
-  .popup .options button:hover { background: #444; }
+  .popup p { font-size: 22px; color: #fff; max-width: 700px; }
+  .popup .options button { display: block; margin: 10px auto; width: 350px; padding: 15px; font-size: 18px; background: #222; border: 1px solid #555; color: #fff; cursor: pointer; transition: 0.2s; font-family: 'Special Elite';}
+  .popup .options button:hover { background: #8b0000; border-color: #fff; }
   
-  #jump{position:absolute;inset:0;background:#000;display:none;z-index:150; background-size: cover; background-position: center; animation: flash 0.1s infinite;}
-  @keyframes flash { 0% {opacity: 1;} 50% {opacity: 0.3;} 100% {opacity: 1;} }
+  #jump{position:absolute;inset:0;background:#000;display:none;z-index:150; background-size: cover; background-position: center;}
   
-  #vignette { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 150px rgba(0,0,0,0.9); z-index: 5; }
-  #bloodOverlay { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle, transparent 50%, rgba(255,0,0,0.4) 100%); opacity: 0; transition: opacity 0.5s; z-index: 6;}
+  /* Vinheta e Sangue Dinâmicos */
+  #vignette { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 150px rgba(0,0,0,0.95); z-index: 5; }
+  #bloodOverlay { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle, transparent 40%, rgba(255,0,0,0.5) 100%); opacity: 0; transition: opacity 0.3s; z-index: 6;}
 </style>
 </head>
 <body>
 
 <div id="menuScreen" class="screen">
   <h1>Helena Alves: O Pesadelo</h1>
-  <p>A escola é um labirinto de erros e conjugações. Encontra os 6 manuais e foge da professora.</p>
-  <p style="font-size:14px; color:#aaa;">WASD Andar | Shift Correr | Espaço Saltar | F Lanterna | E Interagir / Esconder</p>
+  <p>A escola é um labirinto de regras e conjugações. Encontra os 6 manuais, sobrevive aos testes e foge da professora.</p>
+  <p style="font-size:14px; color:#aaa;">WASD Andar | Shift Correr | Espaço Saltar | F Lanterna | E Interagir | C Cacifo | Q Caneta</p>
   <input id="roomInput" placeholder="Código da sala (ou vazio para criar)">
   <div>
     <button id="createBtn">Criar Sala</button>
@@ -940,44 +1058,41 @@ function updateHelenaAI(delta) {
   </div>
 </div>
 
-<div id="lobbyScreen" class="screen">
+<div id="lobbyScreen" class="screen" style="display:none;">
   <h1>Sala de Espera</h1>
-  <p>Código: <strong id="displayRoomCode" style="font-size:30px; color:yellow;"></strong></p>
-  <div id="lobbyList" style="font-size:22px;">Jogadores: 1</div>
+  <p>Código da Sala: <strong id="displayRoomCode" style="font-size:30px; color:yellow;"></strong></p>
+  <div id="lobbyList" style="font-size:22px;">Jogadores na sala: 1</div>
   <button id="startGameBtn" style="display:none; background:#005500;">Iniciar Aula (Host)</button>
-  <p id="waitMsg" style="color: #aaa;">À espera do professor...</p>
+  <p id="waitMsg" style="color: #aaa;">À espera do professor iniciar a aula...</p>
 </div>
 
 <div id="gameOverScreen" class="screen" style="display:none;">
-  <h1 id="endTitle" class="blood-text" style="color:red;">GAME OVER</h1>
+  <h1 id="endTitle" class="blood-text" style="color:red;">REPROVADO</h1>
   <p id="endMessage" style="font-size:24px;">A tua média final foi negativa.</p>
-  <button id="backToMenuBtn">Voltar ao Menu</button>
+  <button id="backToMenuBtn">Voltar ao Menu Principal</button>
 </div>
 
-<!-- QTE -->
+<!-- QTE / Verbos / Exames -->
 <div id="qteScreen" class="popup">
     <h2>BLOQUEIO DE ESCRITOR!</h2>
-    <p>CARREGA NO ESPAÇO RAPIDAMENTE PARA TE LIBERTARES!</p>
-    <h1 id="qteCount" style="font-size:60px; color:#0f0;">0 / 15</h1>
+    <p>CARREGA NO ESPAÇO RAPIDAMENTE!</p>
+    <div id="qteCount" style="font-size:50px; color:#0f0; margin-top:20px;">0 / 15</div>
 </div>
 
-<!-- Puzzle de Rima -->
+<!-- Puzzle / Teste de Português -->
 <div id="puzzleScreen" class="popup">
-    <h2>PORTÃO DA RIMA</h2>
-    <p>Qual destas palavras rima com <span style="color:yellow" id="rimetarget"></span>?</p>
+    <h2>PORTÃO DA RIMA / TESTE</h2>
+    <p id="rimetarget" style="color:yellow; font-size:26px;"></p>
     <div class="options" id="puzzleOptions"></div>
-</div>
-
-<div id="minimapContainer">
-    <canvas id="minimap" width="150" height="150"></canvas>
 </div>
 
 <div id="hud">
     Manuais: <span id="count">0</span>/6<br>
     <span id="statusHud">Estado: Normal</span><br>
-    <span id="batteryHud">Lanterna: 100%</span>
+    <span id="batteryHud">Lanterna: 100%</span><br>
+    <span id="staminaHud">Stamina: 100%</span>
 </div>
-<div id="questHud">Objetivo: Encontrar manuais</div>
+<div id="questHud">Objetivo: Encontrar os 6 manuais</div>
 <div id="vignette"></div>
 <div id="bloodOverlay"></div>
 <div id="jump"></div>
@@ -988,16 +1103,24 @@ function updateHelenaAI(delta) {
 const socket = io();
 let roomId = null, isHost = false;
 
-// --- ESTADO DO JOGO ---
+// --- ESTADO GLOBAL DO JOGO ---
 let scene, camera, renderer, player, helena;
-let manuals = [], batteries = [], coffees = [], otherPlayers = {}, targetPositions = {}, interactables = [], walls = [];
+let manuals = [], batteries = [], interactables = [], walls = [], grammaticalTraps = [];
 let keys = {}, yaw = 0, pitch = 0, running = false, dead = false, collected = 0;
 let speedBoostTime = 0, helenaFuryTime = 0, helenaIsStunned = 0;
-let velocityY = 0, isJumping = false, canMove = true, isHidden = false;
+let velocityY = 0, isJumping = false, canMove = true;
 let flashlightPower = 100, isFlashlightOn = true;
-let qteActive = false, qteCount = 0;
-let puzzleActive = false;
-let helenaSpeed = 3.0;
+let qteActive = false, qteCount = 0, puzzleActive = false, examActive = false;
+let helenaSpeed = 3.2;
+let stamina = 100, isExhausted = false, isHiding = false, hasRedPen = false;
+let helenaWaypoints = [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(-25, 0, -10),
+    new THREE.Vector3(25, 0, 20),
+    new THREE.Vector3(0, 0, 25)
+];
+let currentWaypointIndex = 0;
+let helenaState = 'PATROL';
 
 const gravity = -30, jumpForce = 10;
 const walkSpeed = 6, sprintSpeed = 10;
@@ -1007,7 +1130,7 @@ const menuScreen = document.getElementById('menuScreen'), lobbyScreen = document
 const gameOverScreen = document.getElementById('gameOverScreen'), qteScreen = document.getElementById('qteScreen');
 const puzzleScreen = document.getElementById('puzzleScreen');
 
-// --- SOCKET LOGIC ---
+// --- LÓGICA DE SOCKET / MULTIPLAYER ---
 document.getElementById('createBtn').onclick = () => {
   socket.emit('createRoom', (res) => {
     roomId = res.roomId; isHost = true;
@@ -1019,7 +1142,7 @@ document.getElementById('createBtn').onclick = () => {
 };
 document.getElementById('joinBtn').onclick = () => {
   const code = document.getElementById('roomInput').value.trim().toUpperCase();
-  if (!code) return alert('Escreve um código!');
+  if (!code) return alert('Escreve um código de sala válido!');
   socket.emit('joinRoom', { roomId: code }, (res) => {
     if (res.error) return alert(res.error);
     roomId = code; isHost = false;
@@ -1033,7 +1156,7 @@ socket.on('updateLobby', (count) => { document.getElementById('lobbyList').inner
 socket.on('gameStarted', () => { startGame(); });
 document.getElementById('backToMenuBtn').onclick = () => { window.location.reload(); };
 
-// --- INICIALIZAÇÃO GRÁFICA ---
+// --- INICIALIZAÇÃO DO JOGO ---
 function startGame() {
   lobbyScreen.style.display = 'none'; menuScreen.style.display = 'none';
   running = true; initThree(); document.body.requestPointerLock();
@@ -1041,8 +1164,8 @@ function startGame() {
 
 function initThree() {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x020202);
-  scene.fog = new THREE.FogExp2(0x020202, 0.04);
+  scene.background = new THREE.Color(0x030305);
+  scene.fog = new THREE.FogExp2(0x030305, 0.045);
   
   camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
   renderer = new THREE.WebGLRenderer({antialias:true});
@@ -1051,25 +1174,36 @@ function initThree() {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.body.appendChild(renderer.domElement);
 
-  const ambient = new THREE.AmbientLight(0x221111, 0.5); scene.add(ambient);
+  // Luzes Globais e Iluminação Cinematográfica
+  const ambient = new THREE.AmbientLight(0x221a1a, 0.5); scene.add(ambient);
+  const moonLight = new THREE.DirectionalLight(0x4466aa, 0.7);
+  moonLight.position.set(30, 50, 30);
+  moonLight.castShadow = true;
+  scene.add(moonLight);
   
-  const flashlight = new THREE.SpotLight(0xffeedd, 3, 30, Math.PI/5, 0.6, 1.5);
-  flashlight.position.set(0.5, -0.2, 0);
+  // Lanterna do Jogador
+  const flashlight = new THREE.SpotLight(0xffeedd, 3.5, 35, Math.PI/5, 0.5, 1.5);
+  flashlight.position.set(0.4, -0.2, 0);
   flashlight.target.position.set(0, 0, -1);
   camera.add(flashlight); camera.add(flashlight.target); scene.add(camera);
 
+  // Luz da Helena
   const helenaLight = new THREE.PointLight(0xff0000, 4, 15);
   helenaLight.name = "helenaLight"; scene.add(helenaLight);
 
+  // Construir o Mundo e Expansões
   buildDetailedSchool();
+  buildExpandedSchoolAreas();
+  buildAdvancedMapExtensions();
+  buildSpookyCourtyardAndGraphicsUpgrade();
+  buildPortugueseGrammarMechanics();
+  setupSchoolBell();
+  
   buildPlayer();
   buildHelena();
   spawnItems();
-  spawnCoffees();
-  buildLockersArea();
-  buildForbiddenLibrary();
-  buildCanteenArea();
 
+  // Eventos de Input e Janela
   addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
   addEventListener('keydown', handleKeyDown);
   addEventListener('keyup', e => keys[e.code] = false);
@@ -1078,7 +1212,7 @@ function initThree() {
   animate();
 }
 
-// --- GERAÇÃO DA ESCOLA (MULTIPISO E POLIDA) ---
+// --- TEXTURAS E AMBIENTE ---
 function createProceduralTexture(type) {
     const canvas = document.createElement('canvas');
     canvas.width = 512; canvas.height = 512;
@@ -1090,19 +1224,19 @@ function createProceduralTexture(type) {
             ctx.fillStyle = `rgba(0,0,0,${Math.random()*0.25})`;
             ctx.beginPath(); ctx.arc(Math.random()*512, Math.random()*512, Math.random()*60, 0, Math.PI*2); ctx.fill();
         }
-        ctx.fillStyle = '#1c2833'; ctx.fillRect(0, 450, 512, 62);
+        ctx.fillStyle = '#1c2833'; ctx.fillRect(0, 440, 512, 72);
     } else if (type === 'floor') {
-        ctx.fillStyle = '#2b1810'; ctx.fillRect(0,0,512,512);
+        ctx.fillStyle = '#2b180a'; ctx.fillRect(0,0,512,512);
         for(let i=0; i<512; i+=64) {
-            ctx.fillStyle = i%128===0 ? '#3a2212' : '#221208';
+            ctx.fillStyle = i%128===0 ? '#3b2210' : '#1e1005';
             ctx.fillRect(i, 0, 64, 512);
         }
     } else if (type === 'chalkboard') {
         ctx.fillStyle = '#112217'; ctx.fillRect(0,0,512,512);
-        ctx.fillStyle = '#fff'; ctx.font = '32px "Special Elite"';
-        ctx.fillText("Aula de Português", 50, 100);
-        ctx.fillText("1. Fonética e Morfologia", 50, 180);
-        ctx.fillText("2. Orações Subordinadas", 50, 240);
+        ctx.fillStyle = '#eee'; ctx.font = '28px "Special Elite"';
+        ctx.fillText("Aula de Português - Regras", 40, 80);
+        ctx.fillText("• Sujeito e Predicado", 40, 150);
+        ctx.fillText("• Orações Subordinadas", 40, 210);
     }
     const tex = new THREE.CanvasTexture(canvas);
     tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
@@ -1110,170 +1244,191 @@ function createProceduralTexture(type) {
 }
 
 function buildDetailedSchool() {
-    const wallMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('wall'), roughness: 0.8}); 
-    const floorMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('floor'), roughness: 0.7});
-    const ceilingMat = new THREE.MeshStandardMaterial({color: 0x0c0c0c});
+    const wallMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('wall'), roughness: 0.9}); 
+    const floorMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('floor'), roughness: 0.8});
+    const ceilingMat = new THREE.MeshStandardMaterial({color: 0x0a0a0a});
 
-    // Chão R/C
     const floor0 = new THREE.Mesh(new THREE.PlaneGeometry(60,60), floorMat);
     floor0.rotation.x = -Math.PI/2; floor0.receiveShadow = true; scene.add(floor0);
 
-    // Teto R/C / Chão 1º Andar
-    const floor1 = new THREE.Mesh(new THREE.PlaneGeometry(60,60), floorMat);
-    floor1.rotation.x = -Math.PI/2; floor1.position.y = 6; floor1.receiveShadow = true; scene.add(floor1);
-
     const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(60,60), ceilingMat);
-    ceiling.rotation.x = Math.PI/2; ceiling.position.y = 12; scene.add(ceiling);
+    ceiling.rotation.x = Math.PI/2; ceiling.position.y = 6; scene.add(ceiling);
 
-    function addWall(x, z, w, d, h=6, yPos=3, rot=0) {
+    function addWall(x, z, w, d, h=6) {
         const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
-        wall.position.set(x, yPos, z); wall.rotation.y = rot;
-        wall.castShadow = true; wall.receiveShadow = true;
+        wall.position.set(x, h/2, z); wall.castShadow = true; wall.receiveShadow = true;
         scene.add(wall);
-        walls.push({ x, z, w, d, rot, yMin: yPos - h/2, yMax: yPos + h/2 });
+        walls.push({ x, z, w, d, rot: 0 });
     }
 
-    // Paredes Exteriores R/C
-    addWall(0, -30, 60, 1, 6, 3, 0); addWall(0, 30, 60, 1, 6, 3, 0);
-    addWall(-30, 0, 1, 60, 6, 3, 0); addWall(30, 0, 1, 60, 6, 3, 0);
+    // Paredes Periféricas
+    addWall(0, -30, 60, 1); addWall(0, 30, 60, 1);
+    addWall(-30, 0, 1, 60); addWall(30, 0, 1, 60);
 
-    // Paredes Exteriores 1º Andar
-    addWall(0, -30, 60, 1, 6, 9, 0); addWall(0, 30, 60, 1, 6, 9, 0);
-    addWall(-30, 0, 1, 60, 6, 9, 0); addWall(30, 0, 1, 60, 6, 9, 0);
+    // Salas Internas
+    addWall(-10, -15, 1, 30); addWall(10, -15, 1, 30);
+    addWall(-20, -5, 1, 20); addWall(20, 5, 1, 20);
 
-    // Escadas / Rampa para o 1º Andar
-    const stairMat = new THREE.MeshStandardMaterial({color: 0x4a3b2c});
-    for(let i=0; i<10; i++) {
-        const step = new THREE.Mesh(new THREE.BoxGeometry(4, 0.6, 1), stairMat);
-        step.position.set(-25, 0.3 + (i*0.55), 10 + i);
-        step.castShadow = true; step.receiveShadow = true;
-        scene.add(step);
-        walls.push({ x: -25, z: 10 + i, w: 4, d: 1, rot: 0, yMin: 0, yMax: 12 });
-    }
+    // Quadro Negro
+    const chalkboard = new THREE.Mesh(new THREE.PlaneGeometry(6, 3), new THREE.MeshStandardMaterial({map: createProceduralTexture('chalkboard')}));
+    chalkboard.position.set(-25, 3, -5); chalkboard.rotation.y = Math.PI/2; scene.add(chalkboard);
 
-    // Candeeiros
+    // Candeeiros com luz intermitente
     for(let i=0; i<5; i++) {
-        const l = new THREE.PointLight(0xffccaa, 1.2, 18);
-        l.position.set(-10 + (i*5), 5.5, 0); l.name = "flickerLight"; scene.add(l);
-        const l2 = new THREE.PointLight(0xffccaa, 1.2, 18);
-        l2.position.set(-10 + (i*5), 11.5, 0); l2.name = "flickerLight"; scene.add(l2);
+        const l = new THREE.PointLight(0xffbb88, 1.2, 18);
+        l.position.set(-10 + (i*5), 5, 0); l.name = "flickerLight"; scene.add(l);
     }
 }
 
-function buildPlayer() {
-    player = new THREE.Object3D();
-    player.position.set(0, 1.6, 0); 
-    scene.add(player);
-    
-    const handGeo = new THREE.BoxGeometry(0.2, 0.2, 0.6);
-    const handMat = new THREE.MeshStandardMaterial({color: 0xffccaa});
-    const hand = new THREE.Mesh(handGeo, handMat);
-    hand.position.set(0.4, -0.4, -0.5);
-    camera.add(hand);
+// --- EXPANSÕES DE MAPA (2º Andar, Cantina, Laboratório, Pátio) ---
+function buildExpandedSchoolAreas() {
+    addCustomRoom(35, -20, 20, 20);
+    addCustomRoom(-35, -20, 20, 20);
+    spawnHidingLockers();
+    spawnSpecialItems();
 }
 
-function buildHelena() {
-    helena = new THREE.Group();
-    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.9, 1.4, 8), new THREE.MeshStandardMaterial({color:0x2c1a0e}));
-    skirt.position.y = 0.7; skirt.castShadow = true; helena.add(skirt);
-    const blouse = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.5), new THREE.MeshStandardMaterial({color:0xaaaaaa}));
-    blouse.position.y = 1.8; blouse.castShadow = true; helena.add(blouse);
+function addCustomRoom(x, z, w, d) {
+    const wallMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('wall'), roughness: 0.9});
+    const w1 = new THREE.Mesh(new THREE.BoxGeometry(w, 6, 1), wallMat); w1.position.set(x, 3, z - d/2); scene.add(w1); walls.push({ x, z: z - d/2, w, d: 1, rot: 0 });
+    const w2 = new THREE.Mesh(new THREE.BoxGeometry(w, 6, 1), wallMat); w2.position.set(x, 3, z + d/2); scene.add(w2); walls.push({ x, z: z + d/2, w, d: 1, rot: 0 });
+    const w3 = new THREE.Mesh(new THREE.BoxGeometry(1, 6, d), wallMat); w3.position.set(x - w/2, 3, z); scene.add(w3); walls.push({ x: x - w/2, z, w: 1, d, rot: 0 });
+    const w4 = new THREE.Mesh(new THREE.BoxGeometry(1, 6, d), wallMat); w4.position.set(x + w/2, 3, z); scene.add(w4); walls.push({ x: x + w/2, z, w: 1, d, rot: 0 });
+}
+
+function buildAdvancedMapExtensions() {
+    const floorMat = new THREE.MeshStandardMaterial({map: createProceduralTexture('floor'), roughness: 0.8});
+    const floor2 = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), floorMat);
+    floor2.rotation.x = -Math.PI/2; floor2.position.set(0, 6, 0); floor2.receiveShadow = true; scene.add(floor2);
     
-    const headBase = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), new THREE.MeshStandardMaterial({color:0xffccaa}));
-    headBase.position.y = 2.5; headBase.castShadow = true; helena.add(headBase);
+    // Escadas
+    for (let i = 0; i < 15; i++) {
+        const step = new THREE.Mesh(new THREE.BoxGeometry(3, 0.4, 1), new THREE.MeshStandardMaterial({color: 0x4a2e15}));
+        step.position.set(25, i * 0.4 + 0.2, 15 - (i * 0.8));
+        scene.add(step);
+        walls.push({ x: 25, z: 15 - (i * 0.8), w: 3, d: 1, rot: 0 });
+    }
+}
 
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = '/helena.jpg';
-    img.onload = () => {
-        const tex = new THREE.Texture(img);
-        tex.needsUpdate = true; tex.minFilter = THREE.LinearFilter;
-        const face = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.8), new THREE.MeshBasicMaterial({map: tex, transparent: true, side: THREE.DoubleSide}));
-        face.position.set(0, 2.5, 0.41); helena.add(face);
-    };
+function buildSpookyCourtyardAndGraphicsUpgrade() {
+    const courtyard = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshStandardMaterial({color: 0x0d1a0d, roughness: 0.9}));
+    courtyard.rotation.x = -Math.PI/2; courtyard.position.set(0, -0.1, -50); courtyard.receiveShadow = true; scene.add(courtyard);
 
-    helena.position.set(20, 0, 20); 
-    scene.add(helena);
+    for (let i = 0; i < 5; i++) {
+        let x = -25 + (i * 12), z = -40;
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 5, 5), new THREE.MeshStandardMaterial({color: 0x150d08}));
+        trunk.position.set(x, 2.5, z); scene.add(trunk);
+        walls.push({ x, z, w: 1, d: 1, rot: 0 });
+        const leaves = new THREE.Mesh(new THREE.DodecahedronGeometry(2.5), new THREE.MeshStandardMaterial({color: 0x071507}));
+        leaves.position.set(x, 5.5, z); scene.add(leaves);
+    }
+}
+
+// --- MECÂNICAS DE PORTUGUÊS E ITENS ---
+function buildPortugueseGrammarMechanics() {
+    const trapGeo = new THREE.PlaneGeometry(3, 3);
+    const trapMat = new THREE.MeshBasicMaterial({color: 0xff0000, transparent: true, opacity: 0.25, side: THREE.DoubleSide});
+    const trapPositions = [
+        [-5, 5, "Fui a praia (Falta de Crase!)"],
+        [15, -10, "Ele interveio na aula (Verbo Intervir!)"],
+        [-15, -5, "Houveram muitos erros (Verbo Haver impessoal!)"]
+    ];
+    trapPositions.forEach(([x, z, text]) => {
+        const trap = new THREE.Mesh(trapGeo, trapMat);
+        trap.rotation.x = -Math.PI/2; trap.position.set(x, 0.02, z);
+        scene.add(trap);
+        grammaticalTraps.push({ x, z, text, active: true });
+    });
+}
+
+function setupSchoolBell() {
+    const bell = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 1.5), new THREE.MeshStandardMaterial({color: 0xffd700, metalness: 0.8}));
+    bell.position.set(0, 4, 0); scene.add(bell);
+    interactables.push({ mesh: bell, type: 'bell', x: 0, z: 0 });
+}
+
+function spawnHidingLockers() {
+    const lockerGeo = new THREE.BoxGeometry(1.2, 4, 1);
+    const lockerMat = new THREE.MeshStandardMaterial({color: 0x2b3e50});
+    [[-9, 5], [9, 5], [25, -10]].forEach(([x, z]) => {
+        const locker = new THREE.Mesh(lockerGeo, lockerMat);
+        locker.position.set(x, 2, z); scene.add(locker);
+        walls.push({ x, z, w: 1.2, d: 1, rot: 0 });
+        interactables.push({ mesh: locker, type: 'locker', x, z });
+    });
+}
+
+function spawnSpecialItems() {
+    const redPen = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.8), new THREE.MeshStandardMaterial({color: 0xff0000, emissive: 0x550000}));
+    redPen.position.set(-35, 1, -20); scene.add(redPen);
+    interactables.push({ mesh: redPen, type: 'redPen', x: -35, z: -20 });
 }
 
 function spawnItems() {
-    const manualPos = [[-25, 1, -10], [25, 1, 20], [0, 1, -25], [-15, 7, 25], [15, 7, -25], [0, 7, 15]];
+    const manualPos = [[-25, 1, -10], [25, 1, 20], [0, 1, -25], [-15, 1, 25], [15, 1, -25], [0, 1, 15]];
     manualPos.forEach(([x,y,z]) => {
         const m = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.7,0.1), new THREE.MeshStandardMaterial({color:0xffcc00, emissive:0x221100}));
-        m.position.set(x,y,z); m.castShadow = true; scene.add(m); manuals.push(m);
+        m.position.set(x,y,z); scene.add(m); manuals.push(m);
     });
 
     for(let i=0; i<8; i++) {
         const bat = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.4, 8), new THREE.MeshStandardMaterial({color:0x00ff00, emissive:0x002200}));
-        bat.position.set(-25 + Math.random()*50, Math.random() > 0.5 ? 0.5 : 6.5, -25 + Math.random()*50);
+        bat.position.set(-25 + Math.random()*50, 0.5, -25 + Math.random()*50);
         scene.add(bat); batteries.push(bat);
     }
 
     const gate = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 0.5), new THREE.MeshStandardMaterial({color:0x333333}));
     gate.position.set(0, 2, 30); scene.add(gate);
-    interactables.push({ mesh: gate, type: 'puzzle', x: 0, z: 30, y: 0 });
-    walls.push({ x: 0, z: 30, w: 4, d: 1, rot: 0, yMin: 0, yMax: 6 });
+    interactables.push({ mesh: gate, type: 'puzzle', x: 0, z: 30 });
+    walls.push({ x: 0, z: 30, w: 4, d: 1, rot: 0 });
 }
 
-function spawnCoffees() {
-    for(let i=0; i<4; i++) {
-        const coffee = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.5, 8), new THREE.MeshStandardMaterial({color: 0x8b5a2b, emissive: 0x3d2314}));
-        coffee.position.set(-20 + Math.random()*40, Math.random() > 0.5 ? 0.5 : 6.5, -20 + Math.random()*40);
-        scene.add(coffee); coffees.push(coffee);
-    }
+// --- JOGADOR E HELENA ---
+function buildPlayer() {
+    player = new THREE.Object3D();
+    player.position.set(0, 1.6, 0); scene.add(player);
 }
 
-function buildLockersArea() {
-    const lockerMat = new THREE.MeshStandardMaterial({color: 0x2b3e50});
-    for(let z = -15; z <= 15; z += 6) {
-        const locker = new THREE.Mesh(new THREE.BoxGeometry(1.5, 4, 1), lockerMat);
-        locker.position.set(28, 2, z);
-        locker.castShadow = true; locker.receiveShadow = true;
-        scene.add(locker);
-        walls.push({ x: 28, z: z, w: 1.5, d: 1, rot: 0, yMin: 0, yMax: 6 });
-        interactables.push({ mesh: locker, type: 'locker', x: 28, z: z, y: 0 });
-    }
+function buildHelena() {
+    helena = new THREE.Group();
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.9, 1.4, 8), new THREE.MeshStandardMaterial({color:0x2c1a0e}));
+    skirt.position.y = 0.7; helena.add(skirt);
+    const blouse = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.5), new THREE.MeshStandardMaterial({color:0xaaaaaa}));
+    blouse.position.y = 1.8; helena.add(blouse);
+    const headBase = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), new THREE.MeshStandardMaterial({color:0xffccaa}));
+    headBase.position.y = 2.5; helena.add(headBase);
+
+    // Textura da cara da Helena
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = '/helena.jpg';
+    img.onload = () => {
+        const tex = new THREE.Texture(img);
+        tex.needsUpdate = true;
+        const face = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.8), new THREE.MeshBasicMaterial({map: tex, transparent: true, side: THREE.DoubleSide}));
+        face.position.set(0, 2.5, 0.41); helena.add(face);
+    };
+
+    helena.position.set(20, 0, 20);
+    scene.add(helena);
 }
 
-function buildForbiddenLibrary() {
-    const shelfMat = new THREE.MeshStandardMaterial({color: 0x3d2314});
-    for(let x = -25; x <= -5; x += 6) {
-        const shelf = new THREE.Mesh(new THREE.BoxGeometry(1.2, 5, 3), shelfMat);
-        shelf.position.set(x, 8, 25);
-        shelf.castShadow = true; shelf.receiveShadow = true;
-        scene.add(shelf);
-        walls.push({ x: x, z: 25, w: 1.2, d: 3, rot: 0, yMin: 6, yMax: 12 });
-    }
-}
-
-function buildCanteenArea() {
-    const tableMat = new THREE.MeshStandardMaterial({color: 0x8b4513});
-    for(let x = -20; x <= 20; x += 10) {
-        const canteenTable = new THREE.Mesh(new THREE.BoxGeometry(6, 1, 2), tableMat);
-        canteenTable.position.set(x, 0.5, -20);
-        canteenTable.castShadow = true; canteenTable.receiveShadow = true;
-        scene.add(canteenTable);
-        walls.push({ x: x, z: -20, w: 6, d: 2, rot: 0, yMin: 0, yMax: 6 });
-    }
-}
-
-// --- INPUTS ---
+// --- INPUTS E CONTROLOS ---
 function handleKeyDown(e) {
     keys[e.code] = true;
     if(e.code === 'KeyF') isFlashlightOn = !isFlashlightOn; 
-    
-    if(e.code === 'KeyE' && !puzzleActive && !qteActive) {
-        checkInteract();
-    }
+    if(e.code === 'KeyE' && !puzzleActive && !qteActive) checkInteract();
+    if(e.code === 'KeyC' && running && !dead) checkHidingSpot();
+    if(e.code === 'KeyQ' && hasRedPen) useRedPen();
 
     if (qteActive && e.code === 'Space') {
         qteCount++;
         document.getElementById('qteCount').innerText = `${qteCount} / 15`;
         if (qteCount >= 15) {
             qteActive = false; canMove = true; qteScreen.style.display = 'none';
-            helena.position.set(player.position.x + 15, helena.position.y, player.position.z + 15);
-            document.getElementById('statusHud').innerText = "Estado: Livre!";
-            helenaIsStunned = Date.now() + 3000;
+            helena.position.set(player.position.x + 18, 0, player.position.z + 18);
+            helenaIsStunned = Date.now() + 4000;
+            document.getElementById('statusHud').innerText = "Estado: Livre do aperto!";
         }
     }
 }
@@ -1286,58 +1441,62 @@ function handleMouseMove(e) {
 
 function checkInteract() {
     for(let obj of interactables) {
-        let dist = Math.sqrt(Math.pow(player.position.x - obj.x, 2) + Math.pow(player.position.z - obj.z, 2));
+        let dist = player.position.distanceTo(new THREE.Vector3(obj.x, player.position.y, obj.z));
         if(dist < 3) {
             if (obj.type === 'puzzle') openPuzzle();
-            if (obj.type === 'locker') {
-                isHidden = !isHidden;
-                if (isHidden) {
-                    canMove = false;
-                    document.getElementById('statusHud').innerText = "Escondido no cacifo! Fica em silêncio...";
-                    player.position.set(obj.x - 1.2, player.position.y, obj.z);
-                } else {
-                    canMove = true;
-                    document.getElementById('statusHud').innerText = "Saíste do cacifo. Cuidado!";
-                }
+            if (obj.type === 'bell') {
+                helena.position.set(-25, 0, -25);
+                document.getElementById('statusHud').innerText = "Sino tocado! A Helena foi distraída!";
             }
-            if (obj.type === 'exit' && collected >= 6) {
-                running = false;
-                document.exitPointerLock();
-                document.getElementById('endTitle').innerText = "VITÓRIA!";
-                document.getElementById('endTitle').style.color = "#00ff00";
-                document.getElementById('endMessage').innerText = "Fugiste da Helena com nota máxima 20!";
-                gameOverScreen.style.display = 'flex';
+            if (obj.type === 'redPen') {
+                hasRedPen = true;
+                obj.mesh.visible = false;
+                document.getElementById('statusHud').innerText = "Apanhaste a Caneta Vermelha (Prime Q para atordoar)!";
             }
         }
     }
 }
 
-// --- PUZZLES ---
+function checkHidingSpot() {
+    for (let obj of interactables) {
+        if (obj.type === 'locker') {
+            let dist = player.position.distanceTo(new THREE.Vector3(obj.x, player.position.y, obj.z));
+            if (dist < 2.5) {
+                isHiding = !isHiding;
+                canMove = !isHiding;
+                if (isHiding) player.position.set(obj.x, 1.6, obj.z + 1.2);
+                document.getElementById('statusHud').innerText = isHiding ? "Escondido no cacifo." : "Estado: Normal";
+                return;
+            }
+        }
+    }
+}
+
+function useRedPen() {
+    hasRedPen = false;
+    helenaIsStunned = Date.now() + 6000;
+    document.getElementById('statusHud').innerText = "Caneta atirada! A Helena está a corrigir os erros em pânico!";
+}
+
 function openPuzzle() {
     puzzleActive = true; canMove = false; document.exitPointerLock();
     const rimas = [
-        { target: "Coração", options: ["Paixão", "Cadeira", "Computador", "Relógio"], correct: "Paixão" },
-        { target: "Ilusão", options: ["Mundo", "Solidão", "Caneta", "Papel"], correct: "Solidão" }
+        { target: "Coração rima com?", options: ["Paixão", "Cadeira", "Relógio"], correct: "Paixão" },
+        { target: "Solidão rima com?", options: ["Mundo", "Ilusão", "Papel"], correct: "Ilusão" }
     ];
-    const r = rimas[Math.floor(Math.random()*rimas.length)];
+    let r = rimas[Math.floor(Math.random()*rimas.length)];
     document.getElementById('rimetarget').innerText = r.target;
-    const optsDiv = document.getElementById('puzzleOptions');
-    optsDiv.innerHTML = '';
+    let optsDiv = document.getElementById('puzzleOptions'); optsDiv.innerHTML = '';
     r.options.forEach(opt => {
-        const btn = document.createElement('button');
-        btn.innerText = opt;
+        let btn = document.createElement('button'); btn.innerText = opt;
         btn.onclick = () => {
+            puzzleScreen.style.display = 'none'; puzzleActive = false; canMove = true; document.body.requestPointerLock();
             if(opt === r.correct) {
-                puzzleScreen.style.display = 'none';
-                puzzleActive = false; canMove = true; document.body.requestPointerLock();
-                document.getElementById('statusHud').innerText = "Portão Aberto!";
-                interactables[0].mesh.visible = false;
-                walls.pop();
+                document.getElementById('statusHud').innerText = "Resposta certa! Portão aberto.";
+                interactables[0].mesh.visible = false; walls.pop();
             } else {
-                helenaSpeed += 1;
-                puzzleScreen.style.display = 'none';
-                puzzleActive = false; canMove = true; document.body.requestPointerLock();
-                document.getElementById('statusHud').innerText = "Erraste! Ela ficou mais rápida!";
+                helenaSpeed += 1.5;
+                document.getElementById('statusHud').innerText = "Erro! A Helena ficou mais rápida!";
             }
         };
         optsDiv.appendChild(btn);
@@ -1345,63 +1504,16 @@ function openPuzzle() {
     puzzleScreen.style.display = 'flex';
 }
 
-// --- COLISÕES ---
-function checkCollision(nx, nz, ny) {
+function checkCollision(nx, nz) {
     if (nx > 29 || nx < -29 || nz > 29 || nz < -29) return true;
     for (let w of walls) {
-        if (ny < w.yMin || ny > w.yMax) continue;
         let dx = Math.abs(nx - w.x); let dz = Math.abs(nz - w.z);
-        if (w.rot === 0) { if (dx < (w.w/2 + 0.4) && dz < (w.d/2 + 0.4)) return true; }
-        else { if (dx < (w.d/2 + 0.4) && dz < (w.w/2 + 0.4)) return true; }
+        if (dx < (w.w/2 + 0.4) && dz < (w.d/2 + 0.4)) return true;
     }
     return false;
 }
 
-// --- MINIMAP RENDERING ---
-function renderMinimap() {
-    const canvas = document.getElementById('minimap');
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, 150, 150);
-
-    // Fundo do mapa
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, 150, 150);
-
-    // Coordenadas escala -30 a 30 -> 0 a 150
-    function scaleX(x) { return (x + 30) * (150 / 60); }
-    function scaleZ(z) { return (z + 30) * (150 / 60); }
-
-    // Desenhar Manuais
-    ctx.fillStyle = '#ffcc00';
-    manuals.forEach(m => {
-        if (m) {
-            ctx.beginPath();
-            ctx.arc(scaleX(m.position.x), scaleZ(m.position.z), 3, 0, Math.PI*2);
-            ctx.fill();
-        }
-    });
-
-    // Desenhar Helena
-    ctx.fillStyle = '#ff0000';
-    ctx.beginPath();
-    ctx.arc(scaleX(helena.position.x), scaleZ(helena.position.z), 5, 0, Math.PI*2);
-    ctx.fill();
-
-    // Desenhar Jogador
-    ctx.fillStyle = '#00ffcc';
-    ctx.beginPath();
-    ctx.arc(scaleX(player.position.x), scaleZ(player.position.z), 5, 0, Math.PI*2);
-    ctx.fill();
-}
-
-function unlockExit() {
-    const exitGate = new THREE.Mesh(new THREE.BoxGeometry(4, 5, 0.5), new THREE.MeshStandardMaterial({color:0x00ff00, emissive:0x005500}));
-    exitGate.position.set(0, 2.5, -29);
-    scene.add(exitGate);
-    interactables.push({ mesh: exitGate, type: 'exit', x: 0, z: -29, y: 0 });
-}
-
-// --- LOOP DO JOGO ---
+// --- LOOP PRINCIPAL DO JOGO ---
 let lastTime = performance.now();
 function animate() {
   requestAnimationFrame(animate);
@@ -1409,38 +1521,42 @@ function animate() {
   const delta = Math.min((performance.now() - lastTime) / 1000, 0.1);
   lastTime = performance.now();
 
-  if(Math.random() > 0.05) {
-      scene.children.forEach(c => { if(c.name === "flickerLight") c.intensity = 1.5; });
-  } else {
-      scene.children.forEach(c => { if(c.name === "flickerLight") c.intensity = 0; });
-  }
+  // Piscar luzes
+  scene.children.forEach(c => {
+      if(c.name === "flickerLight") c.intensity = Math.random() > 0.08 ? 1.5 : 0.2;
+  });
 
-  if (!dead && canMove && !puzzleActive) {
+  if (!dead && canMove && !puzzleActive && !examActive) {
+    // Física de salto e gravidade
     if (keys['Space'] && !isJumping && !qteActive) { velocityY = jumpForce; isJumping = true; }
     velocityY += gravity * delta;
     player.position.y += velocityY * delta;
-    
-    let floorHeight = 1.6;
-    if (player.position.z > 10 && player.position.z < 25 && player.position.x < -20 && player.position.y > 5) {
-        floorHeight = 7.6;
-    } else if (player.position.y > 6) {
-        floorHeight = 7.6;
+    if (player.position.y < 1.6) { player.position.y = 1.6; velocityY = 0; isJumping = false; }
+
+    // Stamina e Corrida
+    let isRunning = keys['ShiftLeft'] && !isExhausted;
+    if (isRunning) {
+        stamina -= delta * 35;
+        if (stamina <= 0) { stamina = 0; isExhausted = true; }
+    } else if (stamina < 100) {
+        stamina += delta * 25;
+        if (stamina > 40) isExhausted = false;
     }
+    document.getElementById('staminaHud').innerText = `Stamina: ${Math.floor(stamina)}%`;
 
-    if (player.position.y < floorHeight) { player.position.y = floorHeight; velocityY = 0; isJumping = false; }
-
+    // Lanterna e Bateria
     if (isFlashlightOn && flashlightPower > 0) {
-        flashlightPower -= delta * 1.5;
-        if(flashlightPower < 0) flashlightPower = 0;
-        camera.children[0].intensity = 3;
+        flashlightPower -= delta * 1.2;
+        camera.children[0].intensity = 3.5;
         document.getElementById('batteryHud').innerText = `Lanterna: ${Math.floor(flashlightPower)}%`;
     } else {
         camera.children[0].intensity = 0;
         document.getElementById('batteryHud').innerText = "Lanterna: OFF";
     }
 
-    let currentSpeed = keys['ShiftLeft'] ? sprintSpeed : walkSpeed;
-    if (Date.now() < speedBoostTime) currentSpeed *= 1.5;
+    // Movimentação
+    let currentSpeed = isRunning ? sprintSpeed : walkSpeed;
+    if (Date.now() < speedBoostTime) currentSpeed *= 1.4;
 
     const dir = new THREE.Vector3();
     if (keys['KeyW']) dir.z -= 1;
@@ -1452,75 +1568,82 @@ function animate() {
       dir.normalize().applyEuler(new THREE.Euler(0, yaw, 0));
       const nx = player.position.x + dir.x * currentSpeed * delta;
       const nz = player.position.z + dir.z * currentSpeed * delta;
-      if (!checkCollision(nx, player.position.z, player.position.y)) player.position.x = nx;
-      if (!checkCollision(player.position.x, nz, player.position.y)) player.position.z = nz;
+      if (!checkCollision(nx, player.position.z)) player.position.x = nx;
+      if (!checkCollision(player.position.x, nz)) player.position.z = nz;
     }
-    socket.emit('move', { roomId, x: player.position.x, y: player.position.y, z: player.position.z, yaw, flashlight: isFlashlightOn });
+    socket.emit('move', { roomId, x: player.position.x, y: player.position.y, z: player.position.z, yaw });
 
-    // IA Helena atualizada
-    const helenaLight = scene.getObjectByName("helenaLight");
-    helenaLight.position.copy(helena.position); helenaLight.position.y += 2.5;
-    
-    if (Date.now() > helenaIsStunned && !isHidden) {
-        let eSpeed = helenaSpeed + (Date.now() < helenaFuryTime ? 3 : 0); 
-        let distToPlayer = helena.position.distanceTo(player.position);
-        if (isFlashlightOn && distToPlayer < 15) eSpeed += 1.5;
-
-        const dirE = new THREE.Vector3().subVectors(new THREE.Vector3(player.position.x, 0, player.position.z), new THREE.Vector3(helena.position.x, 0, helena.position.z)).normalize();
-        helena.position.x += dirE.x * eSpeed * delta;
-        helena.position.z += dirE.z * eSpeed * delta;
-        helena.lookAt(player.position.x, helena.position.y, player.position.z);
-        helena.position.y = Math.sin(performance.now() * 0.006) * 0.3;
-
-        if (distToPlayer < 2.0 && !qteActive) {
-            triggerQTE();
+    // Armadilhas de Português
+    grammaticalTraps.forEach(trap => {
+        if (trap.active && player.position.distanceTo(new THREE.Vector3(trap.x, player.position.y, trap.z)) < 1.5) {
+            trap.active = false;
+            helenaSpeed += 1.5;
+            document.getElementById('statusHud').innerText = `ERRO: ${trap.text} (A Helena ouviu-te!)`;
         }
+    });
+
+    // Recolha de Manuais e Pilhas
+    manuals.forEach((m, idx) => {
+        if (m && player.position.distanceTo(m.position) < 2) {
+            scene.remove(m); manuals[idx] = null; collected++;
+            document.getElementById('count').innerText = collected;
+            if (collected >= 6) {
+                document.getElementById('questHud').innerText = "Objetivo Concluído! Foge para a saída!";
+            }
+        }
+    });
+    batteries.forEach((b, idx) => {
+        if (b && player.position.distanceTo(b.position) < 2) {
+            scene.remove(b); batteries[idx] = null;
+            flashlightPower = Math.min(100, flashlightPower + 40);
+        }
+    });
+
+    // IA da Professora Helena Polida
+    const helenaLight = scene.getObjectByName("helenaLight");
+    if (helenaLight) helenaLight.position.copy(helena.position).y += 2.5;
+
+    if (Date.now() > helenaIsStunned) {
+        let distToPlayer = helena.position.distanceTo(player.position);
+        if (distToPlayer < 12 && !isHiding) helenaState = 'CHASE';
+        else if (helenaState === 'CHASE' && distToPlayer > 20) helenaState = 'PATROL';
+
+        let eSpeed = helenaSpeed;
+        if (helenaState === 'PATROL') {
+            let targetWP = helenaWaypoints[currentWaypointIndex];
+            let dirE = new THREE.Vector3().subVectors(targetWP, helena.position);
+            if (dirE.length() < 2) currentWaypointIndex = (currentWaypointIndex + 1) % helenaWaypoints.length;
+            else {
+                dirE.normalize();
+                helena.position.addScaledVector(dirE, eSpeed * 0.6 * delta);
+            }
+        } else if (helenaState === 'CHASE') {
+            let dirE = new THREE.Vector3().subVectors(player.position, helena.position).normalize();
+            helena.position.addScaledVector(dirE, eSpeed * delta);
+            
+            // Ativar QTE se a Helena agarrar o jogador
+            if (distToPlayer < 2.0 && !qteActive) {
+                qteActive = true; canMove = false; document.exitPointerLock();
+                qteCount = 0;
+                document.getElementById('qteCount').innerText = "0 / 15";
+                qteScreen.style.display = 'flex';
+            }
+        }
+        helena.lookAt(player.position.x, helena.position.y, player.position.z);
     }
+
+    // Efeito de vinheta de sangue dinâmica por proximidade
+    let dHelena = player.position.distanceTo(helena.position);
+    document.getElementById('bloodOverlay').style.opacity = dHelena < 10 && !isHiding ? (10 - dHelena) / 10 : 0;
   }
 
+  // Atualizar câmara do jogador
   camera.position.copy(player.position);
-  camera.rotation.set(0, 0, 0);
+  camera.rotation.set(0,0,0);
   camera.rotation.y = yaw;
   camera.rotation.x = pitch;
 
-  // Recolhas
-  manuals.forEach((m, idx) => {
-      if (m && player.position.distanceTo(m.position) < 1.5) {
-          scene.remove(m); manuals[idx] = null; collected++;
-          document.getElementById('count').innerText = collected;
-          document.getElementById('statusHud').innerText = "Manual encontrado!";
-          if (collected >= 6) {
-              document.getElementById('questHud').innerText = "Objetivo: Foge para a saída principal!";
-              unlockExit();
-          }
-      }
-  });
-
-  batteries.forEach((b, idx) => {
-      if (b && player.position.distanceTo(b.position) < 1.5) {
-          scene.remove(b); batteries[idx] = null;
-          flashlightPower = Math.min(100, flashlightPower + 35);
-          document.getElementById('statusHud').innerText = "Pilhas recolhidas!";
-      }
-  });
-
-  coffees.forEach((c, idx) => {
-      if (c && player.position.distanceTo(c.position) < 1.5) {
-          scene.remove(c); coffees[idx] = null;
-          speedBoostTime = Date.now() + 8000;
-          document.getElementById('statusHud').innerText = "Café bebido! Velocidade máxima!";
-      }
-  });
-
-  renderMinimap();
   renderer.render(scene, camera);
-}
-
-function triggerQTE() {
-    qteActive = true; canMove = false; qteCount = 0;
-    document.getElementById('qteCount').innerText = `0 / 15`;
-    qteScreen.style.display = 'flex';
-    document.getElementById('statusHud').innerText = "A HELENA APANHOU-TE!";
 }
 </script>
 </body>
