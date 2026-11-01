@@ -9,7 +9,7 @@
   #start{position:absolute;inset:0;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;gap:10px}
   #start input{padding:10px;font-size:16px;width:200px;text-align:center}
   #start button{padding:12px 24px;font-size:16px;background:#8b0000;color:#fff;border:2px solid #fff;cursor:pointer}
-  #hud{position:absolute;top:10px;left:10px;font-size:16px}
+  #hud{position:absolute;top:10px;left:10px;font-size:16px;text-shadow: 2px 2px 2px #000;}
   #msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:22px;color:#f00;text-align:center;background:rgba(0,0,0,.8);padding:15px;display:none}
   #jump{position:absolute;inset:0;background:#f00;display:none;z-index:50}
 </style>
@@ -32,13 +32,13 @@ const socket = io();
 let roomId = null;
 let scene, camera, renderer, player, helena, manuals = [], otherPlayers = {};
 let keys = {}, yaw = 0, pitch = 0, running = false, dead = false, collected = 0;
-const speed = 5, enemySpeed = 2.5;
+const speed = 5, enemySpeed = 2.8; // Aumentei um pouco a velocidade dela
 
 const startDiv = document.getElementById('start');
 document.getElementById('createBtn').onclick = () => {
   socket.emit('createRoom', (res) => {
     roomId = res.roomId;
-    alert('Sala criada: ' + roomId + '\nPartilha este código com os teus amigos.');
+    alert('Sala criada: ' + roomId);
     startGame();
   });
 };
@@ -62,47 +62,108 @@ function startGame() {
 function initThree() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x050505);
-  scene.fog = new THREE.FogExp2(0x050505, 0.06);
+  scene.fog = new THREE.FogExp2(0x050505, 0.05); // Nevoeiro para dar medo
+  
   camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
   renderer = new THREE.WebGLRenderer({antialias:true});
   renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
-  scene.add(new THREE.AmbientLight(0x404040, 0.6));
-  const dl = new THREE.DirectionalLight(0xffffff, 0.4);
-  dl.position.set(10,20,10); scene.add(dl);
+  // Luzes de escola (amareladas e fracas)
+  scene.add(new THREE.AmbientLight(0x553311, 0.6));
+  const dl = new THREE.DirectionalLight(0xffeedd, 0.5);
+  dl.position.set(10,20,10);
+  dl.castShadow = true;
+  scene.add(dl);
 
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(100,100), new THREE.MeshStandardMaterial({color:0x222222}));
-  floor.rotation.x = -Math.PI/2; scene.add(floor);
+  // --- CENÁRIO DE ESCOLA ---
+  // Chão com textura de madeira (linóleo)
+  const floorTex = new THREE.CanvasTexture(createWoodTexture());
+  floorTex.wrapS = THREE.RepeatWrapping;
+  floorTex.wrapT = THREE.RepeatWrapping;
+  floorTex.repeat.set(20, 20);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(100,100), new THREE.MeshStandardMaterial({map: floorTex}));
+  floor.rotation.x = -Math.PI/2; 
+  floor.receiveShadow = true;
+  scene.add(floor);
 
-  const wallMat = new THREE.MeshStandardMaterial({color:0x3a3a3a});
+  // Paredes com teto
+  const wallMat = new THREE.MeshStandardMaterial({color:0xdcdcdc}); // Branco sujo
   const wallGeo = new THREE.BoxGeometry(10,4,1);
+  
+  // Desenha o labirinto e adiciona teto
   [[0,-20,0],[0,20,0],[-20,0,Math.PI/2],[20,0,Math.PI/2],[-5,-10,0],[5,-10,0],[-5,10,0],[5,10,0],[-10,0,Math.PI/2],[10,0,Math.PI/2],[0,-5,0],[0,5,0]].forEach(([x,z,r])=>{
     const w = new THREE.Mesh(wallGeo, wallMat);
-    w.position.set(x,2,z); w.rotation.y = r; scene.add(w);
+    w.position.set(x,2,z); 
+    w.rotation.y = r; 
+    w.castShadow = true;
+    w.receiveShadow = true;
+    scene.add(w);
   });
 
+  // Teto (faz a escola parecer fechada)
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(100,100), new THREE.MeshStandardMaterial({color:0x222222}));
+  ceiling.rotation.x = Math.PI/2;
+  ceiling.position.y = 4;
+  scene.add(ceiling);
+
+  // Quadros de Português nas paredes
+  const quadroMat = new THREE.MeshStandardMaterial({color:0x444444, emissive: 0x111111});
+  for(let i=0; i<8; i++){
+      const quadro = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 0.1), quadroMat);
+      quadro.position.set(-15 + (i*3), 2, -19.4); // Parede do fundo
+      scene.add(quadro);
+  }
+
   player = new THREE.Object3D();
-  player.position.set(0,1.6,0); scene.add(player);
+  player.position.set(0,1.6,0); 
+  scene.add(player);
 
+  // --- HELENA ALVES (A PROFESSORA) ---
   helena = new THREE.Group();
+  
+  // Corpo (Casaco)
   const body = new THREE.Mesh(new THREE.BoxGeometry(1,2,0.5), new THREE.MeshStandardMaterial({color:0x2a1a1a}));
-  body.position.y = 1; helena.add(body);
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,0.8), new THREE.MeshStandardMaterial({color:0xffccaa}));
-  head.position.y = 2.2; helena.add(head);
-  const hair = new THREE.Mesh(new THREE.BoxGeometry(0.9,0.4,0.9), new THREE.MeshStandardMaterial({color:0x3d2b1f}));
-  hair.position.y = 2.6; helena.add(hair);
-  const eyeGeo = new THREE.SphereGeometry(0.1);
-  const eyeMat = new THREE.MeshStandardMaterial({color:0xff0000, emissive:0xff0000});
-  const eyeL = new THREE.Mesh(eyeGeo, eyeMat); eyeL.position.set(-0.2,2.2,0.41);
-  const eyeR = new THREE.Mesh(eyeGeo, eyeMat); eyeR.position.set(0.2,2.2,0.41);
-  helena.add(eyeL, eyeR);
-  helena.position.set(10,0,10); scene.add(helena);
+  body.position.y = 1; 
+  body.castShadow = true;
+  helena.add(body);
+  
+  // Cara (A TUA FOTO)
+  const textureLoader = new THREE.TextureLoader();
+  // Carrega a foto que fizeste upload no GitHub
+  textureLoader.load('/helena.jpg', (texture) => {
+      // Criar um plano para a foto
+      const faceGeo = new THREE.PlaneGeometry(0.9, 0.9);
+      const faceMat = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+      const face = new THREE.Mesh(faceGeo, faceMat);
+      face.position.set(0, 2.2, 0.26); // Fica à frente da "cabeça"
+      helena.add(face);
+      
+      // Uma cabeça invisível atrás da foto (para dar volume)
+      const headBase = new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,0.8), new THREE.MeshStandardMaterial({color:0xffccaa}));
+      headBase.position.y = 2.2;
+      helena.add(headBase);
+  });
 
+  // Olhos vermelhos (por cima da foto para dar aspeto de possessão)
+  const eyeGeo = new THREE.SphereGeometry(0.08);
+  const eyeMat = new THREE.MeshBasicMaterial({color:0xff0000});
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat); eyeL.position.set(-0.2,2.3,0.27);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat); eyeR.position.set(0.2,2.3,0.27);
+  helena.add(eyeL, eyeR);
+
+  helena.position.set(10,0,10); 
+  scene.add(helena);
+
+  // Manuais
   const positions = [[-15,5],[15,-5],[0,15],[-12,-12],[12,12],[5,-15]];
   positions.forEach(([x,z]) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.7,0.1), new THREE.MeshStandardMaterial({color:0xffcc00, emissive:0x442200}));
-    m.position.set(x,1,z); scene.add(m); manuals.push(m);
+    m.position.set(x,1,z); 
+    m.castShadow = true;
+    scene.add(m); 
+    manuals.push(m);
   });
 
   addEventListener('resize', () => {
@@ -120,6 +181,24 @@ function initThree() {
   });
 
   animate();
+}
+
+// Função para gerar uma textura de madeira (para o chão)
+function createWoodTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#5c4033'; // Castanho escuro
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.strokeStyle = '#3b281f';
+    ctx.lineWidth = 2;
+    for(let i=0; i<256; i+=32) {
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(256, i);
+        ctx.stroke();
+    }
+    return canvas;
 }
 
 let lastTime = performance.now();
@@ -150,6 +229,8 @@ function animate() {
     if (d > 1) {
       const dirE = new THREE.Vector3().subVectors(player.position, helena.position).normalize();
       helena.position.add(dirE.multiplyScalar(enemySpeed * delta));
+      // Faz a Helena olhar sempre para o jogador
+      helena.lookAt(player.position.x, helena.position.y + 2.2, player.position.z);
     }
     if (d < 1.5) triggerDeath();
 
@@ -174,7 +255,10 @@ function animate() {
 function triggerDeath() {
   dead = true;
   document.getElementById('jump').style.display = 'block';
+  // Coloca a foto no ecrã todo no jumpscare
+  document.getElementById('jump').style.background = "url('/helena.jpg') center/cover";
   socket.emit('died', { roomId });
+  
   setTimeout(() => {
     document.getElementById('jump').style.display = 'none';
     player.position.set(0,1.6,0);
