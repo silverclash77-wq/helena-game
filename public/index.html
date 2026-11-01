@@ -6,25 +6,19 @@
 <style>
   body{margin:0;overflow:hidden;background:#000;font-family:'Courier New',monospace;color:#fff}
   canvas{display:block}
-  
-  .screen {
-    position:absolute; inset:0; background:rgba(0,0,0,0.95); 
-    display:flex; flex-direction:column; align-items:center; justify-content:center; 
-    z-index:100; gap:15px; text-align: center;
-  }
+  .screen { position:absolute; inset:0; background:rgba(0,0,0,0.95); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:100; gap:15px; text-align: center; }
   .screen h1 { color: #8b0000; text-shadow: 3px 3px 6px #000; font-size: 45px; margin-bottom: 0; font-family: 'Georgia', serif;}
   .screen p { color: #ccc; max-width: 600px; line-height: 1.5; font-size: 16px;}
   .screen input{padding:10px;font-size:16px;width:200px;text-align:center; background: #222; color: #fff; border: 2px solid #555;}
   .screen button{padding:12px 24px;font-size:16px;background:#8b0000;color:#fff;border:2px solid #fff;cursor:pointer; font-weight: bold; margin: 5px; transition: 0.3s;}
   .screen button:hover { background: #ff0000; transform: scale(1.05);}
-  
-  #hud{position:absolute;top:15px;left:15px;font-size:18px;text-shadow: 2px 2px 3px #000; z-index: 10; background: rgba(0,0,0,0.5); padding: 10px; border-left: 4px solid #8b0000;}
-  #sanityHud { color: #00ffcc; font-weight: bold; }
-  #jump{position:absolute;inset:0;background:#000;display:none;z-index:50; background-size: contain; background-repeat: no-repeat; background-position: center; border: 20px solid #500;}
-  
+  #hud{position:absolute;top:15px;left:15px;font-size:18px;text-shadow: 2px 2px 3px #000; z-index: 10; background: rgba(0,0,0,0.6); padding: 10px; border-left: 4px solid #8b0000;}
+  #statusHud { color: #00ffcc; font-weight: bold; }
+  #batteryHud { color: #ffaa00; font-weight: bold; }
+  #jump{position:absolute;inset:0;background:#000;display:none;z-index:50; background-size: contain; background-repeat: no-repeat; background-position: center; border: 20px solid #500; animation: flash 0.2s infinite;}
+  @keyframes flash { 0% {opacity: 1;} 50% {opacity: 0.8;} 100% {opacity: 1;} }
   #lobbyScreen { display: none; }
   #lobbyList { font-size: 20px; color: #fff; margin: 20px 0; }
-  
   .blood-text { color: #ff0000; animation: pulse 1s infinite; }
   @keyframes pulse { 0% {opacity: 1;} 50% {opacity: 0.5;} 100% {opacity: 1;} }
 </style>
@@ -33,7 +27,8 @@
 
 <div id="menuScreen" class="screen">
   <h1>Helena Alves Horror Game</h1>
-  <p>Encontra os 6 manuais de português. Cuidado com os poemas malditos e com o Livro de Camões...</p>
+  <p>Encontra os 6 manuais. Cuidado com os poemas. O Livro de Camões cega-a.</p>
+  <p style="font-size:12px; color:#888;">WASD Andar | Shift Correr | Espaço Saltar</p>
   <input id="roomInput" placeholder="Código da sala (ou vazio para criar)">
   <div>
     <button id="createBtn">Criar Sala</button>
@@ -57,7 +52,8 @@
 
 <div id="hud">
     Manuais: <span id="count">0</span>/6<br>
-    <span id="sanityHud">Sanidade: 1</span>
+    <span id="statusHud">Estado: Normal</span><br>
+    <span id="batteryHud">Lanterna: 100%</span>
 </div>
 <div id="jump"></div>
 
@@ -66,20 +62,21 @@
 <script>
 const socket = io();
 let roomId = null, isHost = false;
-let scene, camera, renderer, player, helena, manuals = [], diaries = [], poems = [], otherPlayers = {};
-let keys = {}, yaw = 0, pitch = 0, running = false, dead = false, collected = 0, sanity = 1;
+let scene, camera, renderer, player, helena, manuals = [], poems = [], batteries = [], otherPlayers = {};
+let keys = {}, yaw = 0, pitch = 0, running = false, dead = false, collected = 0;
 let collidableBoxes = []; 
-const speed = 5;
-let enemySpeed = 2.5;
-let isHelenaBlind = false; // Mecânica do Livro de Camões
-let lightFlickerTime = 0;
+let isHelenaBlind = false, speedBoostTime = 0;
+let playerFloor = 0;
+let velocityY = 0, isJumping = false;
+const gravity = -25, jumpForce = 8;
+const walkSpeed = 5, sprintSpeed = 8, enemySpeed = 2.8;
+let flashlightPower = 100, isFlashlightOn = true;
 
 // Elementos UI
 const menuScreen = document.getElementById('menuScreen');
 const lobbyScreen = document.getElementById('lobbyScreen');
 const gameOverScreen = document.getElementById('gameOverScreen');
 
-// ... (Lógica de Menus e Lobby igual à anterior) ...
 document.getElementById('createBtn').onclick = () => {
   socket.emit('createRoom', (res) => {
     roomId = res.roomId; isHost = true;
@@ -110,10 +107,40 @@ function startGame() {
   running = true; initThree(); document.body.requestPointerLock();
 }
 
+// --- CRIAÇÃO DE TEXTURAS PROCEDURAIS (ALTA QUALIDADE) ---
+function createTexture(type) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    if (type === 'wall') {
+        ctx.fillStyle = '#d4c5b0'; ctx.fillRect(0,0,512,512);
+        ctx.fillStyle = '#c2b09a'; 
+        for(let i=0; i<512; i+=64) { ctx.fillRect(0, i, 512, 4); }
+    } else if (type === 'floor') {
+        ctx.fillStyle = '#3b2210'; ctx.fillRect(0,0,512,512);
+        for(let i=0; i<512; i+=64) {
+            ctx.fillStyle = i%128===0 ? '#4a2e15' : '#2e1a0c';
+            ctx.fillRect(i, 0, 64, 512);
+        }
+    } else if (type === 'gym') {
+        ctx.fillStyle = '#8b4513'; ctx.fillRect(0,0,512,512);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(256, 256, 100, 0, Math.PI*2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, 256); ctx.lineTo(512, 256); ctx.stroke();
+    } else if (type === 'grass') {
+        ctx.fillStyle = '#1a3b12'; ctx.fillRect(0,0,512,512);
+        for(let i=0; i<2000; i++) {
+            ctx.fillStyle = Math.random() > 0.5 ? '#234a19' : '#112a0c';
+            ctx.fillRect(Math.random()*512, Math.random()*512, 4, 4);
+        }
+    }
+    return new THREE.CanvasTexture(canvas);
+}
+
 function initThree() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x050505);
-  scene.fog = new THREE.FogExp2(0x050505, 0.04);
+  scene.fog = new THREE.FogExp2(0x050505, 0.03);
   
   camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
   renderer = new THREE.WebGLRenderer({antialias:true});
@@ -121,47 +148,60 @@ function initThree() {
   renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
-  // Iluminação
+  // Iluminação Base
   scene.add(new THREE.AmbientLight(0x332222, 0.4)); 
-  const flashlight = new THREE.PointLight(0xffeedd, 1.8, 18);
-  camera.add(flashlight); scene.add(camera);
+  
+  // Lanterna do Jogador
+  const flashlight = new THREE.SpotLight(0xffeedd, 2, 25, Math.PI/6, 0.5, 1);
+  flashlight.position.set(0,0,0);
+  flashlight.target.position.set(0,0,-1);
+  camera.add(flashlight); camera.add(flashlight.target);
+  scene.add(camera);
 
-  // Luz vermelha da Helena
-  const helenaLight = new THREE.PointLight(0xff0000, 2, 10);
+  // Luz da Helena
+  const helenaLight = new THREE.PointLight(0xff0000, 2, 12);
   helenaLight.name = "helenaLight";
   scene.add(helenaLight);
 
-  buildBeautifulSchool();
+  buildSchool();
 
   player = new THREE.Object3D();
-  player.position.set(0,1.6,0); scene.add(player);
+  player.position.set(0,1.6,0); 
+  scene.add(player);
 
   buildHelena();
   
-  // Manuais normais (amarelos)
-  const manualPos = [[-15, 1, 5], [15, 1, -5], [-12, 1, -12], [12, 1, 12], [5, 1, -15]];
+  // Manuais (Distribuídos pelos andares)
+  const manualPos = [[-15, 1, 5], [15, 1, -5], [-12, 6.2, -12], [12, 6.2, 12], [-15, 11.4, -10], [25, 1, 25]];
   manualPos.forEach(([x,y,z]) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.8,0.15), new THREE.MeshStandardMaterial({color:0xffcc00, emissive:0x442200}));
-    m.position.set(x,y,z); m.castShadow = true;
-    scene.add(m); manuals.push(m);
+    m.position.set(x,y,z); m.castShadow = true; scene.add(m); manuals.push(m);
   });
 
-  // O Livro de Camões (Manual especial)
+  // Livro de Camões (Azul) no 2º andar
   const camoesBook = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.8,0.15), new THREE.MeshStandardMaterial({color:0x0000ff, emissive:0x000088}));
-  camoesBook.position.set(0, 1, 15); // No fundo da escola
-  scene.add(camoesBook); manuals.push(camoesBook);
+  camoesBook.position.set(0, 11.4, 15); scene.add(camoesBook); manuals.push(camoesBook);
 
-  // Poemas Malditos (Papéis no chão)
-  const poemPos = [[-5, 0.1, 5], [8, 0.1, 8], [-10, 0.1, 10]];
+  // Poemas Malditos
+  const poemPos = [[-5, 0.1, 5], [8, 0.1, 8], [-10, 5.1, 10], [15, 10.1, -15]];
   poemPos.forEach(([x,y,z]) => {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 1), new THREE.MeshStandardMaterial({color:0xeeeeee, side: THREE.DoubleSide}));
-    p.rotation.x = -Math.PI/2; p.position.set(x,y,z);
-    scene.add(p); poems.push(p);
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 1), new THREE.MeshStandardMaterial({color:0xeeeeee}));
+    p.rotation.x = -Math.PI/2; p.position.set(x,y,z); scene.add(p); poems.push(p);
   });
+
+  // Pilhas de Lanterna
+  for(let i=0; i<6; i++) {
+      const bat = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.4,0.2), new THREE.MeshStandardMaterial({color:0x00ff00, emissive:0x005500}));
+      bat.position.set(-15 + Math.random()*30, [0.2, 5.2, 10.2][i%3], -15 + Math.random()*30);
+      scene.add(bat); batteries.push(bat);
+  }
 
   // Eventos
   addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-  addEventListener('keydown', e => keys[e.code] = true);
+  addEventListener('keydown', e => {
+      keys[e.code] = true;
+      if(e.code === 'KeyF') isFlashlightOn = !isFlashlightOn; // Ligar/Desligar lanterna
+  });
   addEventListener('keyup', e => keys[e.code] = false);
   addEventListener('mousemove', e => {
     if (!running || dead) return;
@@ -172,92 +212,88 @@ function initThree() {
   animate();
 }
 
-// --- ESCOLA BONITA (Texturas Procedurais) ---
-function createTexture(type) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256; canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    if (type === 'wall') {
-        ctx.fillStyle = '#b0a090'; ctx.fillRect(0,0,256,256);
-        ctx.fillStyle = '#8a7a6a'; // Linhas de tijolo
-        for(let i=0; i<256; i+=32) { ctx.fillRect(0, i, 256, 2); }
-        for(let i=0; i<256; i+=64) { ctx.fillRect(i, 0, 2, 256); }
-    } else if (type === 'floor') {
-        ctx.fillStyle = '#4a2e15'; ctx.fillRect(0,0,256,256);
-        ctx.fillStyle = '#3a2210'; // Tábuas de madeira
-        for(let i=0; i<256; i+=32) { ctx.fillRect(i, 0, 2, 256); }
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        for(let i=0; i<256; i+=32) { ctx.fillRect(i+4, 0, 1, 256); }
-    } else if (type === 'poster') {
-        ctx.fillStyle = '#ddd'; ctx.fillRect(0,0,256,256);
-        ctx.fillStyle = '#000'; ctx.font = '20px Courier'; 
-        ctx.fillText('LÍNGUA', 20, 50); ctx.fillText('PORTUGUESA', 20, 80);
-        ctx.fillStyle = '#8b0000'; ctx.font = 'bold 40px Georgia';
-        ctx.fillText('OS', 100, 150); ctx.fillText('LUZÍADAS', 40, 200);
-    }
-    return new THREE.CanvasTexture(canvas);
-}
-
-function buildBeautifulSchool() {
+// --- CONSTRUÇÃO DA ESCOLA (3 ANDARES + GINÁSIO + JARDIM) ---
+function buildSchool() {
     const wallMat = new THREE.MeshStandardMaterial({map: createTexture('wall')}); 
     const floorMat = new THREE.MeshStandardMaterial({map: createTexture('floor')});
-    const posterMat = new THREE.MeshBasicMaterial({map: createTexture('poster')});
+    const gymMat = new THREE.MeshStandardMaterial({map: createTexture('gym')});
+    const grassMat = new THREE.MeshStandardMaterial({map: createTexture('grass')});
 
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(40,40), floorMat);
-    floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
+    // Jardim (Exterior)
+    const garden = new THREE.Mesh(new THREE.PlaneGeometry(100,100), grassMat);
+    garden.rotation.x = -Math.PI/2; garden.position.y = -0.1; garden.receiveShadow = true;
+    scene.add(garden);
 
-    const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(40,40), new THREE.MeshStandardMaterial({color:0x111111}));
-    ceiling.rotation.x = Math.PI/2; ceiling.position.y = 5; scene.add(ceiling);
-
-    function createWall(x, z, w, h, d, rot=0) {
+    // Função auxiliar de paredes
+    function createWall(x, z, w, h, d, rot=0, yPos=null) {
         const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
-        wall.position.set(x, h/2, z); wall.rotation.y = rot;
+        wall.position.set(x, yPos !== null ? yPos : h/2, z); wall.rotation.y = rot;
         wall.castShadow = true; wall.receiveShadow = true; scene.add(wall);
         collidableBoxes.push({ x, z, w, d, rot });
     }
 
-    // Paredes Exteriores
+    // --- R/C (Andar 0) ---
+    const floor0 = new THREE.Mesh(new THREE.PlaneGeometry(40,40), floorMat);
+    floor0.rotation.x = -Math.PI/2; floor0.receiveShadow = true; scene.add(floor0);
+    
     createWall(0, -20, 40, 5, 1); createWall(0, 20, 40, 5, 1);
     createWall(-20, 0, 1, 5, 40); createWall(20, 0, 1, 5, 40);
-    
-    // Labirinto Escolar (Salas de aula)
     createWall(-5, -5, 15, 5, 1); createWall(8, 8, 15, 5, 1);
     createWall(10, -10, 1, 5, 15); createWall(-10, 10, 1, 5, 15);
 
-    // Quadros de Português (Posters)
+    // --- 1º Andar ---
+    const floor1 = new THREE.Mesh(new THREE.PlaneGeometry(40,40), floorMat);
+    floor1.rotation.x = -Math.PI/2; floor1.position.y = 5; floor1.receiveShadow = true; scene.add(floor1);
+    
+    createWall(0, -20, 40, 5, 1, 0, 7.5); createWall(0, 20, 40, 5, 1, 0, 7.5);
+    createWall(-20, 0, 1, 5, 40, 0, 7.5); createWall(20, 0, 1, 5, 40, 0, 7.5);
+    createWall(-8, 0, 1, 5, 15, 0, 7.5); createWall(5, -5, 15, 5, 1, 0, 7.5);
+
+    // --- 2º Andar ---
+    const floor2 = new THREE.Mesh(new THREE.PlaneGeometry(40,40), floorMat);
+    floor2.rotation.x = -Math.PI/2; floor2.position.y = 10; floor2.receiveShadow = true; scene.add(floor2);
+    
+    createWall(0, -20, 40, 5, 1, 0, 12.5); createWall(0, 20, 40, 5, 1, 0, 12.5);
+    createWall(-20, 0, 1, 5, 40, 0, 12.5); createWall(20, 0, 1, 5, 40, 0, 12.5);
+    createWall(5, 5, 15, 5, 1, 0, 12.5);
+
+    // --- Ginásio (Anexo no lado direito) ---
+    const gymFloor = new THREE.Mesh(new THREE.PlaneGeometry(20, 30), gymMat);
+    gymFloor.rotation.x = -Math.PI/2; gymFloor.position.set(30, 0.01, 0); scene.add(gymFloor);
+    // Paredes do Ginásio
+    createWall(40, 0, 1, 8, 30); createWall(30, -15, 20, 8, 1); createWall(30, 15, 20, 8, 1);
+    // Bola de Basquete gigante (Obstáculo)
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(1.5), new THREE.MeshStandardMaterial({color:0xff6600}));
+    ball.position.set(30, 1.5, 0); scene.add(ball);
+    collidableBoxes.push({ x: 30, z: 0, w: 3, d: 3, rot: 0 });
+
+    // --- Escadas (Ligações entre andares) ---
+    // R/C para 1º
+    const stairs1 = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 10), new THREE.MeshStandardMaterial({color:0x333333}));
+    stairs1.position.set(15, 2.5, 0); stairs1.rotation.x = Math.PI / 2; stairs1.rotation.z = Math.PI / 6; scene.add(stairs1);
+    // 1º para 2º
+    const stairs2 = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 10), new THREE.MeshStandardMaterial({color:0x333333}));
+    stairs2.position.set(-15, 7.5, 0); stairs2.rotation.x = Math.PI / 2; stairs2.rotation.z = -Math.PI / 6; scene.add(stairs2);
+
+    // Luzes
     for(let i=0; i<3; i++) {
-        const p = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), posterMat);
-        p.position.set(-5 + (i*5), 2.5, -19.4); scene.add(p);
-    }
-
-    // Cacifos Coloridos (Lockers)
-    for(let i=0; i<4; i++) {
-        const locker = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 0.8), new THREE.MeshStandardMaterial({color: i%2===0 ? 0x8b0000 : 0x003366}));
-        locker.position.set(18.5, 2, -10 + (i*3)); scene.add(locker);
-        collidableBoxes.push({ x: 18.5, z: -10 + (i*3), w: 2, d: 0.8, rot: 0 });
-    }
-
-    // Luzes do teto (piscam)
-    for(let i=0; i<4; i++) {
-        const l = new THREE.PointLight(0xffffaa, 0.8, 15);
-        l.position.set(-15 + (i*10), 4.5, 0);
-        l.name = "flickerLight";
-        scene.add(l);
+        const l = new THREE.PointLight(0xffffaa, 0.8, 20);
+        l.position.set(-10 + (i*10), 4.5 + (i*5), 0); l.name = "flickerLight"; scene.add(l);
     }
 }
 
-// --- A CARA DA HELENA (RESOLVIDO) ---
+// --- HELENA (FOTO RESOLVIDA) ---
 function buildHelena() {
     helena = new THREE.Group();
     const body = new THREE.Mesh(new THREE.BoxGeometry(1,2,0.5), new THREE.MeshStandardMaterial({color:0x111111}));
     body.position.y = 1; body.castShadow = true; helena.add(body);
     
-    // Criar um elemento de imagem HTML escondido para ler a foto e transformar em textura
+    // O TRUQUE MESTRE PARA A FOTO APARECER: Usar o objeto Image do HTML
     const img = new Image();
-    img.src = '/helena.jpg';
+    img.src = '/helena.jpg'; // Tem de estar na raiz do GitHub
     img.onload = () => {
         const texture = new THREE.Texture(img);
-        texture.needsUpdate = true; // Força o Three.js a ler a imagem
+        texture.needsUpdate = true; // Força o Three.js a ler
         texture.minFilter = THREE.LinearFilter;
         const faceMat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
         const face = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2), faceMat);
@@ -265,22 +301,23 @@ function buildHelena() {
         helena.add(face);
     };
     img.onerror = () => {
-        console.error("FOTO NÃO ENCONTRADA. Verifica se se chama helena.jpg no GitHub.");
         const fallback = new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,0.8), new THREE.MeshBasicMaterial({color:0xff0000}));
         fallback.position.y = 2.2; helena.add(fallback);
     };
 
-    helena.position.set(15,0,15); 
-    scene.add(helena);
+    helena.position.set(15,0,15); scene.add(helena);
 }
 
-// --- COLISÕES ---
-function checkCollision(nx, nz) {
-    if (nx > 19.5 || nx < -19.5 || nz > 19.5 || nz < -19.5) return true;
+// --- COLISÕES (Agora com Y para os andares) ---
+function checkCollision(nx, ny, nz) {
+    if (nx > 39 || nx < -19.5 || nz > 19.5 || nz < -19.5) return true; // Limites do jardim
     for (let box of collidableBoxes) {
         let dx = Math.abs(nx - box.x); let dz = Math.abs(nz - box.z);
-        if (box.rot === 0) { if (dx < (box.w/2 + 0.4) && dz < (box.d/2 + 0.4)) return true; }
-        else { if (dx < (box.d/2 + 0.4) && dz < (box.w/2 + 0.4)) return true; }
+        // Se estiver no mesmo andar (ou perto da parede)
+        if (Math.abs(ny - box.y) < 4) {
+            if (box.rot === 0) { if (dx < (box.w/2 + 0.4) && dz < (box.d/2 + 0.4)) return true; }
+            else { if (dx < (box.d/2 + 0.4) && dz < (box.w/2 + 0.4)) return true; }
+        }
     }
     return false;
 }
@@ -292,87 +329,109 @@ function animate() {
   const delta = (performance.now() - lastTime) / 1000;
   lastTime = performance.now();
 
-  // Efeito de luz a piscar
-  lightFlickerTime += delta;
-  if(lightFlickerTime > 0.1) {
-      lightFlickerTime = 0;
-      scene.children.forEach(c => {
-          if(c.name === "flickerLight") {
-              c.intensity = Math.random() > 0.1 ? 0.8 : 0.2; // 10% de chance de apagar
-          }
-      });
-  }
-
   if (!dead) {
+    // Física de Salto
+    if (keys['Space'] && !isJumping) { velocityY = jumpForce; isJumping = true; }
+    velocityY += gravity * delta;
+    player.position.y += velocityY * delta;
+
+    // Chão (Deteção de Andar)
+    let baseY = 1.6;
+    if (player.position.y > 5) baseY = 6.6;
+    if (player.position.y > 10) baseY = 11.6;
+    
+    // Escadas
+    if (player.position.x > 12 && player.position.x < 18 && player.position.z > -5 && player.position.z < 5) {
+        if (player.position.y < 5) baseY = 1.6 + (player.position.x - 12) * 1.2;
+    }
+    if (player.position.x > -18 && player.position.x < -12 && player.position.z > -5 && player.position.z < 5) {
+        if (player.position.y > 5 && player.position.y < 10) baseY = 6.6 + (Math.abs(player.position.x) - 12) * 1.2;
+    }
+
+    if (player.position.y < baseY) { player.position.y = baseY; velocityY = 0; isJumping = false; }
+
+    // Lanterna
+    if (isFlashlightOn && flashlightPower > 0) {
+        flashlightPower -= delta * 1.5; // Gasta bateria
+        if(flashlightPower < 0) flashlightPower = 0;
+        camera.children[0].intensity = 2;
+        document.getElementById('batteryHud').innerText = `Lanterna: ${Math.floor(flashlightPower)}%`;
+    } else {
+        camera.children[0].intensity = 0;
+        document.getElementById('batteryHud').innerText = "Lanterna: OFF";
+    }
+
+    // Movimento do Jogador
+    let currentSpeed = keys['ShiftLeft'] ? sprintSpeed : walkSpeed;
+    if (Date.now() < speedBoostTime) currentSpeed *= 1.5;
+
     const dir = new THREE.Vector3();
     if (keys['KeyW']) dir.z -= 1;
     if (keys['KeyS']) dir.z += 1;
     if (keys['KeyA']) dir.x -= 1;
     if (keys['KeyD']) dir.x += 1;
     
-    let currentSpeed = speed;
-    if (window.speedBoostTime && Date.now() < window.speedBoostTime) currentSpeed *= 1.6; // Boost do poema
-
     if (dir.length() > 0) {
       dir.normalize().applyEuler(new THREE.Euler(0, yaw, 0));
       const nx = player.position.x + dir.x * currentSpeed * delta;
       const nz = player.position.z + dir.z * currentSpeed * delta;
-      if (!checkCollision(nx, player.position.z)) player.position.x = nx;
-      if (!checkCollision(player.position.x, nz)) player.position.z = nz;
+      if (!checkCollision(nx, player.position.y - 1.6, player.position.z)) player.position.x = nx;
+      if (!checkCollision(player.position.x, player.position.y - 1.6, nz)) player.position.z = nz;
     }
+    socket.emit('move', { roomId, x: player.position.x, y: player.position.y, z: player.position.z, yaw });
 
-    socket.emit('move', { roomId, x: player.position.x, z: player.position.z, yaw });
-
-    // Movimento da Helena
+    // IA DA HELENA (Agora desvia-se de paredes)
     const helenaLight = scene.getObjectByName("helenaLight");
     helenaLight.position.copy(helena.position); helenaLight.position.y += 2;
 
     if (!isHelenaBlind) {
-        const d = helena.position.distanceTo(new THREE.Vector3(player.position.x, 0, player.position.z));
-        if (d > 1) {
-          const dirE = new THREE.Vector3().subVectors(player.position, helena.position).normalize();
-          helena.position.add(dirE.multiplyScalar(enemySpeed * delta));
-          helena.lookAt(player.position.x, helena.position.y + 2.2, player.position.z);
-        }
-        if (d < 1.5) triggerDeath();
+        // Move-se em direção ao jogador
+        const dirE = new THREE.Vector3().subVectors(new THREE.Vector3(player.position.x, 0, player.position.z), new THREE.Vector3(helena.position.x, 0, helena.position.z)).normalize();
+        const nextX = helena.position.x + dirE.x * enemySpeed * delta;
+        const nextZ = helena.position.z + dirE.z * enemySpeed * delta;
+        
+        // Colisão da Helena com as paredes
+        if (!checkCollision(nextX, helena.position.y, helena.position.z)) helena.position.x = nextX;
+        if (!checkCollision(helena.position.x, helena.position.y, nextZ)) helena.position.z = nextZ;
+
+        // Segue o andar do jogador
+        let targetY = 0; if (player.position.y > 5) targetY = 5; if (player.position.y > 10) targetY = 10;
+        helena.position.y += (targetY - helena.position.y) * 2 * delta;
+        helena.lookAt(player.position.x, helena.position.y + 2.2, player.position.z);
+
+        if (helena.position.distanceTo(player.position) < 1.5) triggerDeath();
     } else {
-        // Se estiver cega, anda aleatoriamente
-        helena.position.x += Math.sin(Date.now()*0.002) * 1 * delta;
-        helena.position.z += Math.cos(Date.now()*0.002) * 1 * delta;
+        helena.position.x += Math.sin(Date.now()*0.002) * 2 * delta;
+        helena.position.z += Math.cos(Date.now()*0.002) * 2 * delta;
     }
 
-    // Apanhar Livros
+    // Apanhar Itens
     manuals.forEach((m, idx) => {
       if (m.visible && player.position.distanceTo(m.position) < 2) {
-        m.visible = false;
-        socket.emit('collectManual', { roomId });
-        collected++;
-        document.getElementById('count').innerText = collected;
-        
-        // Se for o Livro de Camões (azul)
-        if (idx === manuals.length - 1) {
-            isHelenaBlind = true;
-            helenaLight.color.setHex(0x0000ff); // Fica azul
-            document.getElementById('sanityHud').innerText = "Cegaste a Helena com Camões! (15s)";
-            setTimeout(() => {
-                isHelenaBlind = false;
-                helenaLight.color.setHex(0xff0000);
-                document.getElementById('sanityHud').innerText = `Sanidade: ${sanity}`;
-            }, 15000);
+        m.visible = false; socket.emit('collectManual', { roomId });
+        collected++; document.getElementById('count').innerText = collected;
+        if (idx === manuals.length - 1) { // Camões
+            isHelenaBlind = true; helenaLight.color.setHex(0x0000ff);
+            document.getElementById('statusHud').innerText = "Camões cegou-a (15s)!";
+            setTimeout(() => { isHelenaBlind = false; helenaLight.color.setHex(0xff0000); document.getElementById('statusHud').innerText = "Estado: Normal"; }, 15000);
         }
-        if (collected >= 6) endGame("VITÓRIA!", "Escapaste da escola e da Helena Alves!");
+        if (collected >= 6) endGame("VITÓRIA!", "Escapaste da escola!");
       }
     });
 
-    // Apanhar Poemas
+    batteries.forEach((b) => {
+        if (b.visible && player.position.distanceTo(b.position) < 2) {
+            b.visible = false; flashlightPower = 100;
+            document.getElementById('batteryHud').innerText = "Lanterna: 100%";
+        }
+    });
+
     poems.forEach((p) => {
         if (p.visible && player.position.distanceTo(p.position) < 1.5) {
-            p.visible = false;
-            window.speedBoostTime = Date.now() + 5000; // 5s de boost
-            // Teleporta a Helena para perto
-            helena.position.set(player.position.x + 8, 0, player.position.z + 8);
-            document.getElementById('sanityHud').innerText = "Leste um poema! A Helena ouviu-te!";
-            setTimeout(() => { document.getElementById('sanityHud').innerText = `Sanidade: ${sanity}`; }, 4000);
+            p.visible = false; speedBoostTime = Date.now() + 5000;
+            helena.position.set(player.position.x + 8, player.position.y, player.position.z + 8);
+            document.getElementById('statusHud').innerText = "Leste um poema! Corre!";
+            setTimeout(() => { document.getElementById('statusHud').innerText = "Estado: Normal"; }, 3000);
         }
     });
   }
@@ -383,19 +442,10 @@ function animate() {
 }
 
 function triggerDeath() {
-  if (sanity > 1) {
-      sanity--;
-      document.getElementById('sanityHud').innerText = `Sanidade: ${sanity}`;
-      player.position.set(-15, 1.6, -15); helena.position.set(15, 0, 15); return;
-  }
-
   dead = true;
   const jumpDiv = document.getElementById('jump');
   jumpDiv.style.display = 'block';
-  
-  // Ecrã de susto usando a imagem
-  jumpDiv.style.backgroundImage = "url('/helena.jpg')";
-  
+  jumpDiv.style.backgroundImage = "url('/helena.jpg')"; // Sustoo
   socket.emit('died', { roomId });
   
   setTimeout(() => {
@@ -413,13 +463,13 @@ function endGame(title, msg) {
 }
 
 // --- REDE ---
-socket.on('playerMoved', ({id, x, z, yaw}) => {
+socket.on('playerMoved', ({id, x, y, z, yaw}) => {
   if (!otherPlayers[id]) {
     const g = new THREE.Group();
     const b = new THREE.Mesh(new THREE.BoxGeometry(0.8,1.8,0.4), new THREE.MeshStandardMaterial({color:0x3366ff}));
     b.position.y = 0.9; g.add(b); scene.add(g); otherPlayers[id] = g;
   }
-  otherPlayers[id].position.set(x, 0, z); otherPlayers[id].rotation.y = yaw;
+  otherPlayers[id].position.set(x, y, z); otherPlayers[id].rotation.y = yaw;
 });
 socket.on('playerLeft', ({id}) => { if (otherPlayers[id]) { scene.remove(otherPlayers[id]); delete otherPlayers[id]; } });
 socket.on('manualCount', (n) => { collected = n; document.getElementById('count').innerText = n; });
