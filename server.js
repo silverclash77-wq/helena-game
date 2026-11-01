@@ -14,19 +14,33 @@ const rooms = {};
 io.on('connection', (socket) => {
   socket.on('createRoom', (cb) => {
     const id = Math.random().toString(36).substring(2, 7).toUpperCase();
-    rooms[id] = { players: {}, collected: 0 };
+    rooms[id] = { 
+        players: {}, 
+        collected: 0, 
+        started: false,
+        host: socket.id 
+    };
     socket.join(id);
-    rooms[id].players[socket.id] = { x: 0, z: 0, alive: true };
-    cb({ roomId: id });
+    rooms[id].players[socket.id] = { x: 0, z: 0, alive: true, sanity: 1 };
+    cb({ roomId: id, isHost: true });
   });
 
   socket.on('joinRoom', ({ roomId }, cb) => {
     if (!rooms[roomId]) return cb({ error: 'Sala não existe' });
     socket.join(roomId);
-    rooms[roomId].players[socket.id] = { x: 0, z: 0, alive: true };
-    socket.emit('roomState', rooms[roomId]);
-    socket.to(roomId).emit('playerJoined', { id: socket.id });
-    cb({ success: true });
+    rooms[roomId].players[socket.id] = { x: 0, z: 0, alive: true, sanity: 1 };
+    
+    // Avisar o host que alguém entrou
+    io.to(rooms[roomId].host).emit('updateLobby', Object.keys(rooms[roomId].players).length);
+    
+    cb({ success: true, isHost: false, started: rooms[roomId].started });
+  });
+
+  socket.on('startGame', ({ roomId }) => {
+    if (rooms[roomId] && rooms[roomId].host === socket.id) {
+        rooms[roomId].started = true;
+        io.to(roomId).emit('gameStarted');
+    }
   });
 
   socket.on('move', ({ roomId, x, z, yaw }) => {
@@ -61,8 +75,15 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     for (const r in rooms) {
       if (rooms[r].players[socket.id]) {
+        const wasHost = rooms[r].host === socket.id;
         delete rooms[r].players[socket.id];
         io.to(r).emit('playerLeft', { id: socket.id });
+        
+        // Se o host sair, passa a host para outro
+        if (wasHost && Object.keys(rooms[r].players).length > 0) {
+            rooms[r].host = Object.keys(rooms[r].players)[0];
+        }
+        
         if (Object.keys(rooms[r].players).length === 0) delete rooms[r];
       }
     }
