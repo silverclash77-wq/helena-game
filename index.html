@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<title>Helena Alves Horror Game</title>
+<style>
+  body{margin:0;overflow:hidden;background:#000;font-family:monospace;color:#fff}
+  canvas{display:block}
+  #start{position:absolute;inset:0;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;gap:10px}
+  #start input{padding:10px;font-size:16px;width:200px;text-align:center}
+  #start button{padding:12px 24px;font-size:16px;background:#8b0000;color:#fff;border:2px solid #fff;cursor:pointer}
+  #hud{position:absolute;top:10px;left:10px;font-size:16px}
+  #msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:22px;color:#f00;text-align:center;background:rgba(0,0,0,.8);padding:15px;display:none}
+  #jump{position:absolute;inset:0;background:#f00;display:none;z-index:50}
+</style>
+</head>
+<body>
+<div id="start">
+  <h1>Helena Alves Horror Game</h1>
+  <input id="roomInput" placeholder="Código da sala (deixa vazio para criar)">
+  <button id="createBtn">Criar Sala</button>
+  <button id="joinBtn">Entrar na Sala</button>
+  <p style="font-size:12px">WASD = andar, rato = olhar. Apanha 6 manuais!</p>
+</div>
+<div id="hud">Manuais: <span id="count">0</span>/6</div>
+<div id="msg"></div>
+<div id="jump"></div>
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const socket = io();
+let roomId = null;
+let scene, camera, renderer, player, helena, manuals = [], otherPlayers = {};
+let keys = {}, yaw = 0, pitch = 0, running = false, dead = false, collected = 0;
+const speed = 5, enemySpeed = 2.5;
+
+const startDiv = document.getElementById('start');
+document.getElementById('createBtn').onclick = () => {
+  socket.emit('createRoom', (res) => {
+    roomId = res.roomId;
+    alert('Sala criada: ' + roomId + '\nPartilha este código com os teus amigos.');
+    startGame();
+  });
+};
+document.getElementById('joinBtn').onclick = () => {
+  const code = document.getElementById('roomInput').value.trim().toUpperCase();
+  if (!code) return alert('Escreve um código de sala!');
+  socket.emit('joinRoom', { roomId: code }, (res) => {
+    if (res.error) return alert(res.error);
+    roomId = code;
+    startGame();
+  });
+};
+
+function startGame() {
+  startDiv.style.display = 'none';
+  running = true;
+  initThree();
+  document.body.requestPointerLock();
+}
+
+function initThree() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x050505);
+  scene.fog = new THREE.FogExp2(0x050505, 0.06);
+  camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+  renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0x404040, 0.6));
+  const dl = new THREE.DirectionalLight(0xffffff, 0.4);
+  dl.position.set(10,20,10); scene.add(dl);
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(100,100), new THREE.MeshStandardMaterial({color:0x222222}));
+  floor.rotation.x = -Math.PI/2; scene.add(floor);
+
+  const wallMat = new THREE.MeshStandardMaterial({color:0x3a3a3a});
+  const wallGeo = new THREE.BoxGeometry(10,4,1);
+  [[0,-20,0],[0,20,0],[-20,0,Math.PI/2],[20,0,Math.PI/2],[-5,-10,0],[5,-10,0],[-5,10,0],[5,10,0],[-10,0,Math.PI/2],[10,0,Math.PI/2],[0,-5,0],[0,5,0]].forEach(([x,z,r])=>{
+    const w = new THREE.Mesh(wallGeo, wallMat);
+    w.position.set(x,2,z); w.rotation.y = r; scene.add(w);
+  });
+
+  player = new THREE.Object3D();
+  player.position.set(0,1.6,0); scene.add(player);
+
+  helena = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1,2,0.5), new THREE.MeshStandardMaterial({color:0x2a1a1a}));
+  body.position.y = 1; helena.add(body);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,0.8), new THREE.MeshStandardMaterial({color:0xffccaa}));
+  head.position.y = 2.2; helena.add(head);
+  const hair = new THREE.Mesh(new THREE.BoxGeometry(0.9,0.4,0.9), new THREE.MeshStandardMaterial({color:0x3d2b1f}));
+  hair.position.y = 2.6; helena.add(hair);
+  const eyeGeo = new THREE.SphereGeometry(0.1);
+  const eyeMat = new THREE.MeshStandardMaterial({color:0xff0000, emissive:0xff0000});
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat); eyeL.position.set(-0.2,2.2,0.41);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat); eyeR.position.set(0.2,2.2,0.41);
+  helena.add(eyeL, eyeR);
+  helena.position.set(10,0,10); scene.add(helena);
+
+  const positions = [[-15,5],[15,-5],[0,15],[-12,-12],[12,12],[5,-15]];
+  positions.forEach(([x,z]) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.7,0.1), new THREE.MeshStandardMaterial({color:0xffcc00, emissive:0x442200}));
+    m.position.set(x,1,z); scene.add(m); manuals.push(m);
+  });
+
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+  addEventListener('keydown', e => keys[e.code] = true);
+  addEventListener('keyup', e => keys[e.code] = false);
+  addEventListener('mousemove', e => {
+    if (!running || dead) return;
+    yaw -= e.movementX * 0.002;
+    pitch -= e.movementY * 0.002;
+    pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+  });
+
+  animate();
+}
+
+let lastTime = performance.now();
+function animate() {
+  requestAnimationFrame(animate);
+  if (!running) return;
+  const delta = (performance.now() - lastTime) / 1000;
+  lastTime = performance.now();
+
+  if (!dead) {
+    const dir = new THREE.Vector3();
+    if (keys['KeyW']) dir.z -= 1;
+    if (keys['KeyS']) dir.z += 1;
+    if (keys['KeyA']) dir.x -= 1;
+    if (keys['KeyD']) dir.x += 1;
+    if (dir.length() > 0) {
+      dir.normalize().applyEuler(new THREE.Euler(0, yaw, 0));
+      const nx = player.position.x + dir.x * speed * delta;
+      const nz = player.position.z + dir.z * speed * delta;
+      if (Math.abs(nx) < 19 && Math.abs(nz) < 19) {
+        player.position.x = nx;
+        player.position.z = nz;
+      }
+    }
+    socket.emit('move', { roomId, x: player.position.x, z: player.position.z, yaw });
+
+    const d = helena.position.distanceTo(player.position);
+    if (d > 1) {
+      const dirE = new THREE.Vector3().subVectors(player.position, helena.position).normalize();
+      helena.position.add(dirE.multiplyScalar(enemySpeed * delta));
+    }
+    if (d < 1.5) triggerDeath();
+
+    manuals.forEach((m) => {
+      if (m.visible && player.position.distanceTo(m.position) < 2) {
+        m.visible = false;
+        socket.emit('collectManual', { roomId });
+        collected++;
+        document.getElementById('count').innerText = collected;
+        if (collected >= 6) winGame();
+      }
+    });
+  }
+
+  camera.position.copy(player.position);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+  renderer.render(scene, camera);
+}
+
+function triggerDeath() {
+  dead = true;
+  document.getElementById('jump').style.display = 'block';
+  socket.emit('died', { roomId });
+  setTimeout(() => {
+    document.getElementById('jump').style.display = 'none';
+    player.position.set(0,1.6,0);
+    helena.position.set(10,0,10);
+    dead = false;
+    socket.emit('respawn', { roomId });
+  }, 5000);
+}
+
+function winGame() {
+  running = false;
+  showMsg('PARABÉNS! Escapaste da Helena Alves!');
+}
+
+function showMsg(t) {
+  const m = document.getElementById('msg');
+  m.innerText = t; m.style.display = 'block';
+  setTimeout(() => m.style.display = 'none', 4000);
+}
+
+socket.on('playerMoved', ({id, x, z, yaw}) => {
+  if (!otherPlayers[id]) {
+    const g = new THREE.Group();
+    const b = new THREE.Mesh(new THREE.BoxGeometry(0.8,1.8,0.4), new THREE.MeshStandardMaterial({color:0x3366ff}));
+    b.position.y = 0.9; g.add(b);
+    scene.add(g);
+    otherPlayers[id] = g;
+  }
+  otherPlayers[id].position.set(x, 0, z);
+  otherPlayers[id].rotation.y = yaw;
+});
+socket.on('playerLeft', ({id}) => {
+  if (otherPlayers[id]) { scene.remove(otherPlayers[id]); delete otherPlayers[id]; }
+});
+socket.on('manualCount', (n) => {
+  collected = n;
+  document.getElementById('count').innerText = n;
+});
+socket.on('gameWon', () => showMsg('TODOS OS MANUAIS APANHADOS! SALA CONCLUÍDA!'));
+socket.on('gameOver', () => { running = false; showMsg('TODOS MORRERAM. SALA PERDIDA.'); });
+</script>
+</body>
+</html>
